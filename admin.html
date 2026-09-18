@@ -1,0 +1,1428 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover"/>
+  <meta name="theme-color" content="#8A737D"/>
+  <title>Phone Borrowing — Admin Portal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet"/>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{
+      --bg:#F9DBC2;--card:#fff;--primary:#8A737D;--primary-dk:#7a6370;
+      --primary2:#D2B0A2;--accent:#9F9A7F;--neutral:#D2C4C4;
+      --text:#33312E;--muted:#9a8a8e;--border:#e0cfc8;
+      --green:#7a9e7e;--red:#c47a7a;--yellow:#b8954a;
+      --sidebar:#8A737D;--shadow:0 2px 16px rgba(138,115,125,.10);--radius:14px;
+    }
+    html{-webkit-text-size-adjust:100%}
+    body{font-family:'DM Sans',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+    /* ── LOGIN ── */
+    #loginScreen{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;
+      background:linear-gradient(135deg,#f0d0b4 0%,#e8c8c8 50%,#d8c4d4 100%)}
+    .login-box{background:var(--card);border:1.5px solid var(--border);border-radius:20px;
+      padding:40px 32px;width:100%;max-width:380px;box-shadow:0 8px 40px rgba(138,115,125,.18);animation:fadeUp .4s ease both}
+    .login-logo{text-align:center;margin-bottom:26px}
+    .login-logo .icon{width:52px;height:52px;background:var(--primary);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:25px;margin:0 auto 12px;box-shadow:0 4px 16px rgba(138,115,125,.3)}
+    .login-logo h1{font-family:'DM Serif Display',serif;font-size:1.5rem;color:var(--primary)}
+    .login-logo p{color:var(--muted);font-size:.78rem;letter-spacing:1px;text-transform:uppercase;margin-top:3px}
+    #loginMsg{margin-top:10px;padding:9px 12px;border-radius:9px;font-size:.82rem;font-weight:500;display:none}
+    #loginMsg.error{background:rgba(196,122,122,.1);color:var(--red);border:1.5px solid rgba(196,122,122,.25);display:block}
+    #loginScreen input{background:#faf7f5;border:1.5px solid var(--border);color:var(--text);font-family:inherit;font-size:.95rem;padding:10px 13px;border-radius:9px;outline:none;transition:border-color .15s;width:100%;-webkit-appearance:none}
+    #loginScreen input:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(138,115,125,.12)}
+
+    /* ── APP ── */
+    #appScreen{display:none}
+    .app-layout{display:flex;min-height:100vh}
+
+    /* ── SIDEBAR ── */
+    .sidebar{width:230px;background:var(--sidebar);display:flex;flex-direction:column;padding:24px 0;position:fixed;top:0;left:0;bottom:0;z-index:200;box-shadow:3px 0 20px rgba(138,115,125,.18);transition:transform .25s ease}
+    .sidebar-brand{padding:0 18px 22px;border-bottom:1px solid rgba(255,255,255,.15)}
+    .sidebar-brand .icon{width:34px;height:34px;background:rgba(255,255,255,.2);border-radius:9px;display:flex;align-items:center;justify-content:center;font-size:17px;margin-bottom:9px}
+    .sidebar-brand h2{font-family:'DM Serif Display',serif;font-size:1rem;color:#fff;line-height:1.3}
+    .sidebar-brand p{color:rgba(255,255,255,.6);font-size:.68rem;letter-spacing:.8px;text-transform:uppercase;margin-top:2px}
+    .nav-section{padding:14px 12px 4px}
+    .nav-label{font-size:.6rem;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:rgba(255,255,255,.45);padding:0 9px;margin-bottom:4px}
+    .nav-item{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:9px;cursor:pointer;font-size:.84rem;font-weight:500;color:rgba(255,255,255,.72);transition:background .12s,color .12s;-webkit-tap-highlight-color:transparent;user-select:none}
+    .nav-item:hover{background:rgba(255,255,255,.12);color:#fff}
+    .nav-item.active{background:rgba(255,255,255,.18);color:#fff;font-weight:600}
+    .nav-item .nav-icon{font-size:.92rem;width:20px;text-align:center;flex-shrink:0}
+    .badge-alert{margin-left:auto;background:var(--red);color:#fff;font-size:.6rem;font-weight:700;padding:1px 6px;border-radius:20px;display:none}
+    .sidebar-footer{margin-top:auto;padding:14px 12px;border-top:1px solid rgba(255,255,255,.15)}
+    .live-bar{display:flex;align-items:center;gap:6px;font-size:.67rem;color:rgba(255,255,255,.55);padding:5px 8px;margin-bottom:7px}
+    .live-dot{width:6px;height:6px;border-radius:50%;background:#a8d4aa;animation:pulse 2s infinite;flex-shrink:0}
+    @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.4;transform:scale(.7)}}
+    .admin-info{display:flex;align-items:center;gap:9px;padding:9px 12px;border-radius:9px;background:rgba(255,255,255,.1);margin-bottom:7px}
+    .admin-avatar{width:30px;height:30px;background:var(--primary2);border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.82rem;font-weight:700;color:var(--primary);flex-shrink:0}
+    .admin-name{font-size:.8rem;font-weight:600;color:#fff}
+    .admin-role{font-size:.67rem;color:rgba(255,255,255,.55)}
+    .btn-logout{width:100%;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);color:rgba(255,255,255,.85);border-radius:9px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer;transition:background .12s}
+    .btn-logout:hover{background:rgba(196,122,122,.3);color:#fff}
+
+    /* ── MOBILE ── */
+    .topbar{display:none;position:fixed;top:0;left:0;right:0;height:54px;background:var(--sidebar);z-index:300;align-items:center;justify-content:space-between;padding:0 16px;box-shadow:0 2px 10px rgba(138,115,125,.2)}
+    .topbar-title{font-family:'DM Serif Display',serif;font-size:1rem;color:#fff}
+    .hamburger{background:none;border:none;color:#fff;font-size:1.4rem;cursor:pointer;padding:8px}
+    .sidebar-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:190}
+    .sidebar-overlay.show{display:block}
+
+    /* ── MAIN ── */
+    .main-content{margin-left:230px;flex:1;padding:28px 24px;max-width:calc(100vw - 230px)}
+    .page{display:none}.page.active{display:block;animation:fadeUp .28s ease both}
+    .page-header{margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    .page-header-left h2{font-family:'DM Serif Display',serif;font-size:1.65rem;color:var(--primary)}
+    .page-header-left p{color:var(--muted);font-size:.84rem;margin-top:3px}
+
+    /* ── CARDS ── */
+    .card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:20px;margin-bottom:16px;box-shadow:var(--shadow)}
+    .card-title{font-size:.65rem;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;color:var(--accent);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between}
+    .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+    .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px}
+
+    /* ── FORM ── */
+    label{display:block;font-size:.77rem;color:var(--muted);font-weight:600;margin-bottom:5px}
+    input[type=text],input[type=password],input[type=number],input[type=date],select,textarea{
+      width:100%;background:#faf7f5;border:1.5px solid var(--border);color:var(--text);
+      font-family:inherit;font-size:.88rem;padding:9px 12px;border-radius:9px;
+      outline:none;transition:border-color .15s;appearance:none;-webkit-appearance:none}
+    input[type=date]{cursor:pointer}
+    input:focus,select:focus,textarea:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(138,115,125,.1)}
+    select option{background:var(--card)}
+    textarea{resize:vertical;min-height:80px}
+    .field{margin-bottom:12px}
+    .inline-row{display:flex;gap:9px;align-items:flex-end;flex-wrap:wrap}
+    .inline-row .field{flex:1;min-width:100px;margin-bottom:0}
+
+    /* ── BUTTONS ── */
+    .btn{padding:9px 18px;border:none;border-radius:9px;font-family:inherit;font-size:.84rem;font-weight:600;cursor:pointer;transition:opacity .12s,transform .1s;white-space:nowrap;-webkit-tap-highlight-color:transparent}
+    .btn:active{transform:scale(.97)}.btn:disabled{opacity:.4;cursor:not-allowed}
+    .btn-primary{background:var(--primary);color:#fff;box-shadow:0 2px 10px rgba(138,115,125,.2)}
+    .btn-primary:hover{background:var(--primary-dk)}
+    .btn-green {background:var(--green);color:#fff}
+    .btn-danger{background:rgba(196,122,122,.1);border:1.5px solid rgba(196,122,122,.25);color:var(--red)}
+    .btn-danger:hover{background:rgba(196,122,122,.18)}
+    .btn-verify{background:rgba(122,158,126,.1);border:1.5px solid rgba(122,158,126,.25);color:var(--green);font-size:.74rem;padding:5px 11px}
+    .btn-warn  {background:rgba(184,149,74,.1); border:1.5px solid rgba(184,149,74,.25); color:var(--yellow);font-size:.74rem;padding:5px 11px}
+    .btn-info  {background:rgba(138,115,125,.1);border:1.5px solid rgba(138,115,125,.25);color:var(--primary);font-size:.74rem;padding:5px 11px}
+    .btn-sm    {padding:7px 13px;font-size:.76rem}
+    .btn-full  {width:100%;padding:11px;font-size:.9rem}
+    .btn-print {display:inline-flex;align-items:center;gap:6px;background:var(--accent);color:#fff;border:none;border-radius:9px;padding:9px 16px;font-family:inherit;font-size:.84rem;font-weight:600;cursor:pointer;transition:opacity .12s}
+    .btn-print:hover{opacity:.85}
+
+    /* ── TOAST ── */
+    .toast{position:fixed;bottom:20px;right:20px;padding:10px 18px;border-radius:10px;font-size:.84rem;font-weight:600;transition:transform .2s ease,opacity .2s ease;opacity:0;z-index:999;transform:translateY(20px);pointer-events:none;max-width:300px}
+    .toast.show{opacity:1;transform:translateY(0)}
+    .toast.success{background:var(--primary);color:#fff}
+    .toast.error  {background:var(--red);color:#fff}
+    .toast.info   {background:var(--accent);color:#fff}
+
+    /* ── TAGS ── */
+    .tag{display:inline-block;font-size:.65rem;font-weight:700;padding:2px 8px;border-radius:20px;white-space:nowrap}
+    .tag-verified  {background:rgba(122,158,126,.15);color:var(--green)}
+    .tag-unverified{background:rgba(154,138,142,.15);color:var(--muted)}
+    .tag-flagged   {background:rgba(196,122,122,.15);color:var(--red)}
+    .tag-active    {background:rgba(138,115,125,.12);color:var(--primary)}
+    .tag-overdue   {background:rgba(184,149,74,.15); color:var(--yellow)}
+    .tag-today     {background:rgba(122,158,126,.12);color:var(--green)}
+
+    /* ── TABLES ── */
+    .table-wrap{overflow-x:auto;border-radius:10px;border:1.5px solid var(--border);-webkit-overflow-scrolling:touch}
+    table{width:100%;border-collapse:collapse;font-size:.78rem}
+    thead tr{background:var(--neutral)}
+    thead th{padding:9px 12px;text-align:left;color:var(--primary);font-weight:700;font-size:.65rem;letter-spacing:.5px;text-transform:uppercase;white-space:nowrap}
+    tbody tr{border-top:1px solid var(--border);transition:background .1s}
+    tbody tr:hover{background:rgba(210,196,196,.12)}
+    tbody td{padding:9px 12px;vertical-align:middle;color:var(--text)}
+    .empty-row td{text-align:center;color:var(--muted);padding:24px;font-style:italic}
+
+    /* ── TOOLBAR ── */
+    .list-toolbar{display:flex;align-items:center;gap:9px;margin-bottom:12px;flex-wrap:wrap}
+    .search-wrap{flex:1;min-width:140px;position:relative}
+    .search-wrap input{padding-left:32px;font-size:.84rem}
+    .search-icon{position:absolute;left:10px;top:50%;transform:translateY(-50%);font-size:.82rem;pointer-events:none;color:var(--muted)}
+    .list-count{font-size:.72rem;color:var(--muted);white-space:nowrap}
+
+    /* ── PAGINATION ── */
+    .pagination{display:flex;align-items:center;justify-content:flex-end;gap:3px;margin-top:12px;flex-wrap:wrap}
+    .pg-btn{width:30px;height:30px;border-radius:8px;border:1.5px solid var(--border);background:transparent;color:var(--muted);font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer;transition:all .12s;display:flex;align-items:center;justify-content:center}
+    .pg-btn:hover{background:var(--neutral);color:var(--primary)}
+    .pg-btn.active{background:var(--primary);border-color:var(--primary);color:#fff}
+    .pg-btn:disabled{opacity:.3;cursor:not-allowed}
+    .pg-info{font-size:.7rem;color:var(--muted);margin:0 4px}
+
+    /* ── BULK IMPORT ── */
+    .bulk-toggle{font-size:.74rem;color:var(--accent);cursor:pointer;text-decoration:underline;margin-left:8px;background:none;border:none;font-family:inherit}
+    #bulkPanel{display:none;margin-top:14px;padding-top:14px;border-top:1.5px solid var(--border)}
+    #bulkPanel.show{display:block}
+    .bulk-hint{font-size:.74rem;color:var(--muted);margin-bottom:10px;line-height:1.5}
+    .xml-drop{border:2px dashed var(--border);border-radius:10px;padding:20px;text-align:center;cursor:pointer;transition:border-color .15s,background .15s;margin-bottom:12px}
+    .xml-drop:hover,.xml-drop.drag{border-color:var(--primary);background:rgba(138,115,125,.05)}
+    .xml-drop p{font-size:.82rem;color:var(--muted);margin-top:6px}
+    .xml-drop .xml-icon{font-size:1.6rem}
+    #xmlFileInput{display:none}
+
+    /* ── VERIFY ── */
+    .verify-input{width:90px!important;padding:5px 8px!important;font-size:.8rem!important;border-radius:7px!important}
+    .verify-saved-note{font-size:.67rem;color:var(--green);margin-top:3px}
+
+    /* ── FILTER TABS ── */
+    .filter-tabs{display:flex;gap:5px;flex-wrap:wrap}
+    .filter-tab{padding:6px 12px;border-radius:8px;font-family:inherit;font-size:.78rem;font-weight:600;cursor:pointer;border:1.5px solid var(--border);background:transparent;color:var(--muted);transition:all .12s}
+    .filter-tab.active{background:var(--primary);border-color:var(--primary);color:#fff}
+
+    /* ── DASHBOARD STATS ── */
+    .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px}
+    .stat-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:5px}
+    .stat-icon{font-size:1.3rem}
+    .stat-label{font-size:.66rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted)}
+    .stat-value{font-family:'DM Serif Display',serif;font-size:1.9rem;color:var(--primary);line-height:1}
+    .stat-sub{font-size:.7rem;color:var(--muted)}
+    .stat-card.green .stat-value{color:var(--green)}
+    .stat-card.red   .stat-value{color:var(--red)}
+    .stat-card.yellow .stat-value{color:var(--yellow)}
+
+    /* ── CHARTS ── */
+    .chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:20px}
+    .chart-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow)}
+    .chart-title{font-size:.68rem;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:var(--accent);margin-bottom:14px}
+    .chart-wrap{position:relative;height:230px}
+    .chart-empty{display:flex;align-items:center;justify-content:center;height:100%;font-size:.84rem;color:var(--muted);font-style:italic}
+
+    /* ── DASHBOARD FILTERS ── */
+    .dash-filters{display:flex;align-items:center;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+    .dash-select{padding:7px 28px 7px 12px;border-radius:8px;border:1.5px solid var(--border);background:var(--card);color:var(--text);font-family:inherit;font-size:.82rem;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none}
+    .select-wrap{position:relative;display:inline-block}
+    .select-wrap::after{content:'▾';position:absolute;right:10px;top:50%;transform:translateY(-50%);pointer-events:none;color:var(--muted);font-size:.78rem}
+    .date-range-wrap{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+    .date-range-wrap input[type=date]{width:auto;padding:7px 10px;font-size:.8rem;min-width:130px}
+    .date-sep{font-size:.8rem;color:var(--muted)}
+
+    /* ── INDIVIDUAL AGENT DASHBOARD ── */
+    #agentDashCard{display:none;animation:fadeUp .3s ease both}
+    #agentDashCard.show{display:block}
+    .agent-dash-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px}
+    .agent-dash-name{font-family:'DM Serif Display',serif;font-size:1.4rem;color:var(--primary)}
+    .agent-dash-meta{font-size:.8rem;color:var(--muted)}
+    .agent-search-bar{display:flex;gap:8px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+    .agent-search-wrap{position:relative;flex:1;min-width:200px;max-width:360px}
+    .agent-search-wrap input{padding-left:32px;font-size:.9rem}
+    .agent-search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:.9rem;pointer-events:none;color:var(--muted)}
+
+    /* ── MISC ── */
+    .skeleton{background:linear-gradient(90deg,var(--neutral) 25%,#e8d9d4 50%,var(--neutral) 75%);background-size:200% 100%;animation:shimmer 1.2s infinite;border-radius:6px;height:12px;margin:6px 0}
+    @keyframes shimmer{from{background-position:200% 0}to{background-position:-200% 0}}
+    .last-updated{font-size:.68rem;color:var(--muted);margin-bottom:7px}
+    .divider-line{border:none;border-top:1.5px solid var(--border);margin:16px 0}
+
+    /* ── PRINT STYLES ── */
+    @media print{
+      .sidebar,.topbar,.sidebar-overlay,.btn-print,.dash-filters,.no-print{display:none!important}
+      .main-content{margin-left:0!important;max-width:100%!important;padding:10px!important}
+      .page{display:block!important}
+      .page:not(#page-dashboard){display:none!important}
+      #agentDashCard.show~.page-section-toggle,#overviewSection{display:block!important}
+      body{background:#fff!important;color:#000!important}
+      .card{border:1px solid #ccc!important;box-shadow:none!important;break-inside:avoid}
+      .stat-value{color:#333!important}
+      .chart-wrap{height:180px!important}
+      @page{margin:1.5cm;size:A4 landscape}
+    }
+
+    /* ── RESPONSIVE ── */
+    @media(max-width:768px){
+      .sidebar{transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}
+      .topbar{display:flex}.main-content{margin-left:0;padding:70px 14px 20px;max-width:100vw}
+      .two-col,.three-col{grid-template-columns:1fr}.chart-grid{grid-template-columns:1fr}
+      .stat-grid{grid-template-columns:1fr 1fr}.inline-row{flex-direction:column}
+      .inline-row .field,.inline-row .btn{width:100%}
+    }
+    @media(min-width:769px) and (max-width:1024px){
+      .sidebar{width:200px}.main-content{margin-left:200px;max-width:calc(100vw - 200px);padding:24px 18px}
+    }
+    @media(min-width:1440px){
+      .sidebar{width:250px}.main-content{margin-left:250px;max-width:calc(100vw - 250px);padding:36px 40px}
+    }
+
+    @keyframes fadeUp  {from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
+    @keyframes fadeDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+  </style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div id="loginScreen">
+  <div class="login-box">
+    <div class="login-logo">
+      <div class="icon">🔐</div><h1>Admin Portal</h1><p>Phone Borrowing System</p>
+    </div>
+    <div class="field"><label>Username</label>
+      <input type="text" id="loginUser" placeholder="Enter username" autocomplete="username" autocorrect="off"/>
+    </div>
+    <div class="field" style="margin-top:11px"><label>Password</label>
+      <input type="password" id="loginPass" placeholder="Enter password" autocomplete="current-password" onkeydown="if(event.key==='Enter')doLogin()"/>
+    </div>
+    <button class="btn btn-primary btn-full" style="margin-top:14px" id="loginBtn" onclick="doLogin()" type="button">Sign In</button>
+    <div id="loginMsg"></div>
+  </div>
+</div>
+
+<!-- APP -->
+<div id="appScreen">
+  <div class="topbar">
+    <button class="hamburger" onclick="toggleSidebar()" type="button">☰</button>
+    <span class="topbar-title">📱 Admin Portal</span>
+    <span style="width:44px"></span>
+  </div>
+  <div class="sidebar-overlay" id="sidebarOverlay" onclick="toggleSidebar()"></div>
+
+  <div class="app-layout">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-brand">
+        <div class="icon">📱</div>
+        <h2>Phone Borrowing System</h2><p>Admin Portal</p>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Overview</div>
+        <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon">📊</span>Dashboard</div>
+        <div class="nav-item" onclick="showPage('records',this)"><span class="nav-icon">📋</span>All Records</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Management</div>
+        <div class="nav-item" onclick="showPage('agents',this)"><span class="nav-icon">👤</span>Manage Agents</div>
+        <div class="nav-item" onclick="showPage('teams',this)"><span class="nav-icon">👥</span>Manage Teams</div>
+        <div class="nav-item" onclick="showPage('phones',this)"><span class="nav-icon">📱</span>Manage Phones</div>
+      </div>
+      <div class="nav-section">
+        <div class="nav-label">Monitoring</div>
+        <div class="nav-item" onclick="showPage('unreturned',this)">
+          <span class="nav-icon">⚠️</span>Unreturned Units
+          <span class="badge-alert" id="unreturnedBadge">0</span>
+        </div>
+        <div class="nav-item" onclick="showPage('history',this)"><span class="nav-icon">📂</span>Unit History</div>
+        <div class="nav-item" onclick="showPage('verify',this)"><span class="nav-icon">✅</span>Verify Calls</div>
+      </div>
+      <div class="sidebar-footer">
+        <div class="live-bar"><div class="live-dot"></div><span id="liveLabel">Connecting…</span></div>
+        <div class="admin-info">
+          <div class="admin-avatar" id="adminAvatar">A</div>
+          <div><div class="admin-name" id="adminName">Admin</div><div class="admin-role">Administrator</div></div>
+        </div>
+        <button class="btn-logout" onclick="doLogout()" type="button">Sign Out</button>
+      </div>
+    </aside>
+
+    <main class="main-content">
+
+      <!-- ══════════ DASHBOARD ══════════ -->
+      <div class="page active" id="page-dashboard">
+        <div class="page-header">
+          <div class="page-header-left">
+            <h2>Dashboard</h2>
+            <p>Overview of phone borrowing activity.</p>
+          </div>
+          <button class="btn-print no-print" onclick="printDashboard()" type="button">🖨️ Print / Save PDF</button>
+        </div>
+
+        <!-- FILTER BAR -->
+        <div class="dash-filters no-print">
+          <div class="filter-tabs dash-period-tabs">
+            <button class="filter-tab active" onclick="setDashPeriod('day',this)" type="button">Today</button>
+            <button class="filter-tab" onclick="setDashPeriod('week',this)" type="button">This Week</button>
+            <button class="filter-tab" onclick="setDashPeriod('month',this)" type="button">This Month</button>
+            <button class="filter-tab" onclick="setDashPeriod('all',this)" type="button">All Time</button>
+            <button class="filter-tab" onclick="setDashPeriod('custom',this)" type="button">📅 Custom</button>
+          </div>
+          <div class="date-range-wrap" id="customDateRange" style="display:none">
+            <input type="date" id="dateFrom" onchange="renderDashboard()"/>
+            <span class="date-sep">→</span>
+            <input type="date" id="dateTo" onchange="renderDashboard()"/>
+          </div>
+          <div class="select-wrap">
+            <select id="dashTeamFilter" class="dash-select" onchange="renderDashboard()">
+              <option value="all">All Teams</option>
+            </select>
+          </div>
+          <span style="font-size:.72rem;color:var(--muted)" id="dashUpdated"></span>
+        </div>
+
+        <!-- INDIVIDUAL AGENT SEARCH -->
+        <div class="card no-print">
+          <div class="card-title">🔍 Individual Agent Performance Search</div>
+          <div class="agent-search-bar">
+            <div class="agent-search-wrap">
+              <span class="agent-search-icon">🔍</span>
+              <input type="text" id="agentDashSearch" placeholder="Search agent name…" oninput="filterAgentDashSearch()" autocorrect="off"/>
+            </div>
+            <div id="agentDashSuggestions" style="position:absolute;margin-top:40px;background:var(--card);border:1.5px solid var(--primary);border-radius:10px;max-height:180px;overflow-y:auto;z-index:100;min-width:250px;box-shadow:0 8px 24px rgba(138,115,125,.18);display:none"></div>
+            <button class="btn btn-primary btn-sm" onclick="clearAgentDash()" type="button" id="clearAgentBtn" style="display:none">✕ Clear</button>
+          </div>
+        </div>
+
+        <!-- INDIVIDUAL AGENT DASHBOARD -->
+        <div id="agentDashCard">
+          <div class="card" style="border-color:var(--primary2)">
+            <div class="agent-dash-header">
+              <div>
+                <div class="agent-dash-name" id="agentDashName">—</div>
+                <div class="agent-dash-meta" id="agentDashMeta"></div>
+              </div>
+              <button class="btn-print" onclick="printDashboard()" type="button">🖨️ Print This Agent</button>
+            </div>
+            <div class="stat-grid" id="agentStatGrid"></div>
+            <div class="chart-grid" style="margin-bottom:0">
+              <div class="chart-card">
+                <div class="chart-title">📈 Borrow Activity</div>
+                <div class="chart-wrap"><canvas id="agentTrendChart"></canvas></div>
+              </div>
+              <div class="chart-card">
+                <div class="chart-title">✅ Verification Status</div>
+                <div class="chart-wrap" style="height:200px"><canvas id="agentVerifyChart"></canvas></div>
+              </div>
+            </div>
+            <hr class="divider-line" style="margin-top:18px"/>
+            <div class="card-title" style="margin-top:14px">📋 Recent Records</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>Unit</th><th>Borrow Time</th><th>Return Time</th><th>Calls</th><th>Successful</th><th>Status</th></tr></thead>
+                <tbody id="agentDashRecords"><tr class="empty-row"><td colspan="6">Select an agent above.</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- OVERVIEW STATS (shown when no individual agent selected) -->
+        <div id="overviewSection">
+          <div class="stat-grid" id="statGrid">
+            <div class="stat-card"><div class="stat-icon">📲</div><div class="stat-label">Total Borrows</div><div class="stat-value" id="s-borrows">—</div><div class="stat-sub">in selected period</div></div>
+            <div class="stat-card"><div class="stat-icon">📞</div><div class="stat-label">Total Calls Made</div><div class="stat-value" id="s-calls">—</div><div class="stat-sub">by returned units</div></div>
+            <div class="stat-card green"><div class="stat-icon">🎯</div><div class="stat-label">Success Rate</div><div class="stat-value" id="s-rate">—</div><div class="stat-sub">successful / total calls</div></div>
+            <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
+            <div class="stat-card yellow"><div class="stat-icon">🔴</div><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
+            <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
+          </div>
+
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="chart-title">📞 Total Calls by Agent</div>
+              <div class="chart-wrap"><canvas id="callsChart"></canvas><div class="chart-empty" id="callsEmpty" style="display:none">No call data.</div></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">🎯 Success Rate by Agent (%)</div>
+              <div class="chart-wrap"><canvas id="rateChart"></canvas><div class="chart-empty" id="rateEmpty" style="display:none">No data.</div></div>
+            </div>
+          </div>
+          <div class="chart-grid">
+            <div class="chart-card">
+              <div class="chart-title">✅ Verification Status</div>
+              <div class="chart-wrap" style="height:210px"><canvas id="verifyChart"></canvas><div class="chart-empty" id="verifyEmpty" style="display:none">No records.</div></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title">📈 Borrow Activity</div>
+              <div class="chart-wrap"><canvas id="trendChart"></canvas><div class="chart-empty" id="trendEmpty" style="display:none">No data.</div></div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-title">🏆 Agent Performance</div>
+            <div class="table-wrap">
+              <table>
+                <thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Borrows</th><th>Total Calls</th><th>Successful</th><th>Rate</th><th>Flagged</th></tr></thead>
+                <tbody id="perfBody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ ALL RECORDS ══════════ -->
+      <div class="page" id="page-records">
+        <div class="page-header"><div class="page-header-left"><h2>All Records</h2><p>Complete borrow and return history.</p></div></div>
+        <div class="card">
+          <div class="card-title">📋 Records</div>
+          <div class="list-toolbar">
+            <div class="search-wrap"><span class="search-icon">🔍</span>
+              <input type="text" id="recordSearch" placeholder="Search agent, unit, serial, notes…" oninput="filterRecords()"/>
+            </div>
+            <span class="list-count" id="recordCount"></span>
+          </div>
+          <div class="last-updated" id="recordsUpdated"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Team</th><th>Unit</th><th>Serial</th><th>Borrow Time</th><th>Return Time</th><th>Notes</th><th>Calls (A)</th><th>Calls (Admin)</th><th>Success (A)</th><th>Success (Admin)</th><th>Status</th></tr></thead>
+              <tbody id="recordsBody"><tr><td colspan="12"><div class="skeleton"></div><div class="skeleton" style="width:70%"></div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="recordsPagination"></div>
+        </div>
+      </div>
+
+      <!-- ══════════ AGENTS ══════════ -->
+      <div class="page" id="page-agents">
+        <div class="page-header"><div class="page-header-left"><h2>Manage Agents</h2><p>Add, search, assign teams, or remove agents.</p></div></div>
+        <div class="card">
+          <div class="card-title">➕ Add Agent
+            <button class="bulk-toggle" onclick="toggleBulk()" type="button">＋ Bulk Import</button>
+          </div>
+          <div class="inline-row">
+            <div class="field"><label>Agent Full Name</label>
+              <input type="text" id="newAgentName" placeholder="e.g. Maria Santos" onkeydown="if(event.key==='Enter')addAgent()" autocorrect="off"/>
+            </div>
+            <div class="field"><label>Team (optional)</label>
+              <select id="newAgentTeam"><option value="">— No Team —</option></select>
+            </div>
+            <button class="btn btn-primary" onclick="addAgent()" type="button">Add Agent</button>
+          </div>
+
+          <!-- BULK IMPORT PANEL -->
+          <div id="bulkPanel">
+            <p class="bulk-hint">Import multiple agents at once. Choose one method:</p>
+
+            <!-- Option A: Paste text -->
+            <div style="margin-bottom:14px">
+              <label style="margin-bottom:6px;display:block">📝 Option A — Paste Names</label>
+              <p class="bulk-hint" style="margin-bottom:6px">One name per line or comma-separated. Optionally add team with a pipe: <em>Name | Team Name</em></p>
+              <textarea id="bulkInput" placeholder="John Santos | Team Alpha&#10;Maria Cruz | Team Beta&#10;Paolo Reyes"></textarea>
+              <div class="field" style="margin-top:8px;margin-bottom:0">
+                <label>Default Team for agents without a team specified</label>
+                <select id="bulkDefaultTeam"><option value="">— No Default Team —</option></select>
+              </div>
+            </div>
+
+            <!-- Option B: XML Upload -->
+            <div style="margin-bottom:14px">
+              <label style="margin-bottom:6px;display:block">📄 Option B — Upload XML File</label>
+              <p class="bulk-hint" style="margin-bottom:8px">XML format: <code style="background:#faf7f5;padding:2px 6px;border-radius:4px;font-size:.78rem">&lt;agents&gt;&lt;agent name="John" team="Alpha"/&gt;&lt;/agents&gt;</code></p>
+              <div class="xml-drop" id="xmlDrop" onclick="document.getElementById('xmlFileInput').click()" ondragover="xmlDragOver(event)" ondrop="xmlDrop(event)" ondragleave="xmlDragLeave(event)">
+                <div class="xml-icon">📄</div>
+                <p>Click to upload or drag & drop your XML file here</p>
+                <p id="xmlStatus" style="color:var(--primary);font-weight:600;margin-top:4px"></p>
+              </div>
+              <input type="file" id="xmlFileInput" accept=".xml" onchange="handleXmlFile(this.files[0])"/>
+            </div>
+
+            <button class="btn btn-green" onclick="bulkImport()" type="button">⚡ Import All</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-title">👥 Current Agents</div>
+          <div class="list-toolbar">
+            <div class="search-wrap"><span class="search-icon">🔍</span>
+              <input type="text" id="agentSearch" placeholder="Search agents…" oninput="filterAgents()"/>
+            </div>
+            <span class="list-count" id="agentCount"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>#</th><th>Agent Name</th><th>Team</th><th>Actions</th></tr></thead>
+              <tbody id="agentTableBody"><tr><td colspan="4"><div class="skeleton"></div><div class="skeleton" style="width:65%"></div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="agentPagination"></div>
+        </div>
+      </div>
+
+      <!-- ══════════ TEAMS ══════════ -->
+      <div class="page" id="page-teams">
+        <div class="page-header"><div class="page-header-left"><h2>Manage Teams</h2><p>Create teams and assign managers.</p></div></div>
+        <div class="card">
+          <div class="card-title">➕ Add New Team</div>
+          <div class="inline-row">
+            <div class="field"><label>Team Name</label><input type="text" id="newTeamName" placeholder="e.g. Team Alpha" onkeydown="if(event.key==='Enter')addTeam()" autocorrect="off"/></div>
+            <div class="field"><label>Manager Name</label><input type="text" id="newTeamManager" placeholder="e.g. John Manager" autocorrect="off"/></div>
+            <button class="btn btn-primary" onclick="addTeam()" type="button">Add Team</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">👥 Current Teams</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Team Name</th><th>Manager</th><th>Agents</th><th>Action</th></tr></thead>
+              <tbody id="teamsTableBody"><tr class="empty-row"><td colspan="4">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ PHONES ══════════ -->
+      <div class="page" id="page-phones">
+        <div class="page-header"><div class="page-header-left"><h2>Manage Phone Units</h2><p>Add, search, or remove phone units.</p></div></div>
+        <div class="card">
+          <div class="card-title">➕ Add New Phone Unit</div>
+          <div class="inline-row">
+            <div class="field"><label>Unit Number</label><input type="text" id="newUnitNo" placeholder="e.g. 1" inputmode="numeric"/></div>
+            <div class="field"><label>Serial Number</label><input type="text" id="newSerialNo" placeholder="e.g. SN-001" onkeydown="if(event.key==='Enter')addPhone()"/></div>
+            <button class="btn btn-primary" onclick="addPhone()" type="button">Add Unit</button>
+          </div>
+        </div>
+        <div class="card">
+          <div class="card-title">📱 Current Phone Units</div>
+          <div class="list-toolbar">
+            <div class="search-wrap"><span class="search-icon">🔍</span>
+              <input type="text" id="phoneSearch" placeholder="Search unit no. or serial…" oninput="filterPhones()"/>
+            </div>
+            <span class="list-count" id="phoneCount"></span>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Unit No.</th><th>Serial No.</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody id="phoneTableBody"><tr><td colspan="4"><div class="skeleton"></div><div class="skeleton" style="width:55%"></div></td></tr></tbody>
+            </table>
+          </div>
+          <div class="pagination" id="phonePagination"></div>
+        </div>
+      </div>
+
+      <!-- ══════════ UNRETURNED ══════════ -->
+      <div class="page" id="page-unreturned">
+        <div class="page-header"><div class="page-header-left"><h2>Unreturned Units</h2><p>Overdue = borrowed on a previous day and not returned.</p></div></div>
+        <div class="card">
+          <div class="card-title">📋 Currently Borrowed Units</div>
+          <div class="last-updated" id="unreturnedUpdated"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Team</th><th>Unit No.</th><th>Serial No.</th><th>Borrowed On</th><th>Status</th></tr></thead>
+              <tbody id="unreturnedBody"><tr class="empty-row"><td colspan="6">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ HISTORY ══════════ -->
+      <div class="page" id="page-history">
+        <div class="page-header"><div class="page-header-left"><h2>Unit History</h2><p>Filter by phone unit and time period.</p></div></div>
+        <div class="card">
+          <div class="card-title">🔍 Filter</div>
+          <div class="two-col">
+            <div class="field"><label>Phone Unit</label>
+              <select id="historyUnit"><option value="">All Units</option></select>
+            </div>
+            <div><label>Time Period</label>
+              <div class="filter-tabs" style="margin-top:5px">
+                <button class="filter-tab active" onclick="setHistFilter('all',this)" type="button">All</button>
+                <button class="filter-tab" onclick="setHistFilter('day',this)" type="button">Today</button>
+                <button class="filter-tab" onclick="setHistFilter('week',this)" type="button">Week</button>
+                <button class="filter-tab" onclick="setHistFilter('month',this)" type="button">Month</button>
+              </div>
+            </div>
+          </div>
+          <button class="btn btn-primary btn-sm" style="margin-top:12px" onclick="loadHistory()" type="button">Apply Filter</button>
+        </div>
+        <div class="card">
+          <div class="card-title">📋 Records</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Team</th><th>Unit</th><th>Borrow Time</th><th>Return Time</th><th>Notes</th><th>Calls (A)</th><th>Calls (Admin)</th><th>Success (A)</th><th>Success (Admin)</th><th>Status</th></tr></thead>
+              <tbody id="historyBody"><tr class="empty-row"><td colspan="11">Select a filter and click Apply.</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- ══════════ VERIFY ══════════ -->
+      <div class="page" id="page-verify">
+        <div class="page-header"><div class="page-header-left"><h2>Verify Client Calls</h2><p>Enter admin-verified counts. Both must match for Verified status.</p></div></div>
+        <div class="card">
+          <div class="card-title">📞 Returned Records</div>
+          <div class="last-updated" id="verifyUpdated"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Unit</th><th>Returned</th><th>Calls (Agent)</th><th>Admin Calls</th><th>Success (Agent)</th><th>Admin Success</th><th>Status</th><th>Save</th></tr></thead>
+              <tbody id="verifyBody"><tr class="empty-row"><td colspan="9">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<!-- Firebase (Firestore) backend: defines window.api(payload), same
+     shape as the old Apps Script api(). Loaded as modules, so they
+     finish before window.onload below fires. -->
+<script type="module" src="./js/firebase-config.js"></script>
+<script type="module" src="./js/firebase-api.js"></script>
+
+<script>
+const SESSION_KEY = 'pbs_admin_v5';
+const PAGE_SIZE   = 10;
+
+let currentHistFilter = 'all';
+let currentDashPeriod = 'day';
+let selectedAgentDash = null;
+let refreshTimer      = null;
+let writeLockedUntil  = 0;
+const verifyOverrides = {};
+let parsedXmlAgents   = [];
+
+let cacheRecords=[], cacheAgents=[], cachePhones=[], cacheTeams=[];
+let chartCalls=null, chartRate=null, chartVerify=null, chartTrend=null;
+let chartAgentTrend=null, chartAgentVerify=null;
+
+const state = {
+  agents:  {data:[],filtered:[],page:1},
+  phones:  {data:[],filtered:[],page:1},
+  records: {data:[],filtered:[],page:1}
+};
+
+// ── SESSION ──────────────────────────────────────────────────
+const saveS=d=>localStorage.setItem(SESSION_KEY,JSON.stringify(d));
+const loadS=()=>{try{return JSON.parse(localStorage.getItem(SESSION_KEY));}catch{return null;}};
+const clrS =()=>localStorage.removeItem(SESSION_KEY);
+
+window.onload=()=>{
+  const s=loadS();
+  if(s)startApp(s);
+  else document.getElementById('loginUser').focus();
+  // Set default date range to today
+  const today=new Date().toISOString().split('T')[0];
+  document.getElementById('dateFrom').value=today;
+  document.getElementById('dateTo').value=today;
+};
+
+function toggleSidebar(){document.getElementById('sidebar').classList.toggle('open');document.getElementById('sidebarOverlay').classList.toggle('show');}
+function closeSidebar(){document.getElementById('sidebar').classList.remove('open');document.getElementById('sidebarOverlay').classList.remove('show');}
+
+// ── LOGIN ──────────────────────────────────────────────────
+async function doLogin(){
+  const username=document.getElementById('loginUser').value.trim();
+  const password=document.getElementById('loginPass').value.trim();
+  const msg=document.getElementById('loginMsg'),btn=document.getElementById('loginBtn');
+  if(!username||!password){msg.textContent='Please enter username and password.';msg.className='error';return;}
+  btn.disabled=true;btn.textContent='Signing in…';msg.className='';msg.textContent='';
+  try{
+    const res=await api({action:'adminLogin',username,password});
+    if(res.success){saveS(res);startApp(res);}
+    else{msg.textContent=res.message;msg.className='error';}
+  }catch{msg.textContent='Connection error.';msg.className='error';}
+  btn.disabled=false;btn.textContent='Sign In';
+}
+
+function startApp(admin){
+  document.getElementById('loginScreen').style.display='none';
+  document.getElementById('appScreen').style.display='block';
+  document.getElementById('adminName').textContent=admin.username;
+  document.getElementById('adminAvatar').textContent=admin.username[0].toUpperCase();
+  loadAll();
+  if(refreshTimer)clearInterval(refreshTimer);
+  refreshTimer=setInterval(()=>{if(Date.now()>writeLockedUntil)refreshAll();},30000);
+}
+
+function setLiveLabel(){document.getElementById('liveLabel').textContent='Live · '+new Date().toLocaleTimeString();}
+function doLogout(){clrS();if(refreshTimer)clearInterval(refreshTimer);document.getElementById('appScreen').style.display='none';document.getElementById('loginScreen').style.display='flex';document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';}
+
+// ── NAV ───────────────────────────────────────────────────
+function showPage(name,el){
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-'+name).classList.add('active');
+  el.classList.add('active');
+  closeSidebar();
+  if(name==='dashboard')  renderDashboard();
+  if(name==='unreturned') loadUnreturned();
+  if(name==='verify')     loadVerify();
+  if(name==='history')    populateHistoryUnits();
+  if(name==='teams')      renderTeamsTable();
+}
+
+// ── LOAD ALL ─────────────────────────────────────────────
+function lockWrites(ms=15000){writeLockedUntil=Date.now()+ms;}
+
+async function loadAll(){
+  try{
+    const [rec,ag,ph,tm,un]=await Promise.all([
+      api({action:'getRecords'}),api({action:'getAgents'}),
+      api({action:'getPhones'}),api({action:'getTeams'}),
+      api({action:'getUnreturned'})
+    ]);
+    if(rec.success){cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
+    if(ag.success) {cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
+    if(ph.success) {cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
+    if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();}
+    updateUnreturnedBadge(un);
+    renderDashboard();
+    setLiveLabel();
+  }catch{}
+}
+
+async function refreshAll(){
+  try{
+    const [rec,ag,ph,tm,un]=await Promise.all([
+      api({action:'getRecords'}),api({action:'getAgents'}),
+      api({action:'getPhones'}),api({action:'getTeams'}),
+      api({action:'getUnreturned'})
+    ]);
+    if(rec.success){cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
+    if(ag.success) {cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
+    if(ph.success&&Date.now()>writeLockedUntil){cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
+    if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();}
+    updateUnreturnedBadge(un);
+    renderDashboard();
+    if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
+    setLiveLabel();
+  }catch{}
+}
+
+// ══════════════════════════════════════════════════════════
+//  DASHBOARD
+// ══════════════════════════════════════════════════════════
+function setDashPeriod(val,el){
+  currentDashPeriod=val;
+  document.querySelectorAll('.dash-period-tabs .filter-tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('customDateRange').style.display=val==='custom'?'flex':'none';
+  renderDashboard();
+  if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
+}
+
+function getDateBounds(){
+  const now=new Date();
+  if(currentDashPeriod==='day')   return {start:new Date(now.getFullYear(),now.getMonth(),now.getDate()),end:null};
+  if(currentDashPeriod==='week')  {const s=new Date(now);s.setDate(now.getDate()-7);return {start:s,end:null};}
+  if(currentDashPeriod==='month') return {start:new Date(now.getFullYear(),now.getMonth(),1),end:null};
+  if(currentDashPeriod==='custom'){
+    const from=document.getElementById('dateFrom').value;
+    const to  =document.getElementById('dateTo').value;
+    return {
+      start: from?new Date(from+'T00:00:00'):null,
+      end:   to  ?new Date(to  +'T23:59:59'):null
+    };
+  }
+  return {start:null,end:null}; // all time
+}
+
+function filterRecordsByPeriodAndTeam(agentNameFilter){
+  const {start,end}=getDateBounds();
+  const teamFilter=document.getElementById('dashTeamFilter')?.value||'all';
+  const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+  return cacheRecords.filter(r=>{
+    if(!r['Borrow Time'])return false;
+    const bt=new Date(r['Borrow Time']);
+    if(start&&bt<start)return false;
+    if(end  &&bt>end)  return false;
+    if(teamFilter&&teamFilter!=='all'){if((agTeam[r['Agent Name']?.toString().trim()]||'')!==teamFilter)return false;}
+    if(agentNameFilter&&r['Agent Name']?.toString().trim()!==agentNameFilter)return false;
+    return true;
+  });
+}
+
+function computeStats(filtered){
+  const returned=filtered.filter(r=>r['Return Time']);
+  const totalBorrows   =filtered.length;
+  const totalCalls     =returned.reduce((s,r)=>s+(parseInt(r['Clients Called (Agent)'])||0),0);
+  const totalSuccessful=returned.reduce((s,r)=>s+(parseInt(r['Successful Calls (Agent)'])||0),0);
+  const successRate    =totalCalls>0?Math.round(totalSuccessful/totalCalls*100):0;
+  const flaggedCount   =returned.filter(r=>r['Verification Status']==='Flagged').length;
+  const verifiedCount  =returned.filter(r=>r['Verification Status']==='Verified').length;
+  const unverifiedCount=returned.filter(r=>(r['Verification Status']||'Unverified')==='Unverified').length;
+  return {totalBorrows,totalCalls,totalSuccessful,successRate,flaggedCount,verifiedCount,unverifiedCount};
+}
+
+function buildTrendData(filtered){
+  const now=new Date();
+  const trendMap={};
+  filtered.forEach(r=>{
+    if(!r['Borrow Time'])return;
+    const d=new Date(r['Borrow Time']);
+    const key=currentDashPeriod==='day'?d.getHours()+'h':d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+    trendMap[key]=(trendMap[key]||0)+1;
+  });
+  let labels=[];
+  if(currentDashPeriod==='day')labels=Array.from({length:24},(_,i)=>i+'h');
+  else if(currentDashPeriod==='week'){for(let i=6;i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);labels.push(d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}));}}
+  else{
+    const days=Math.min(30,filtered.length>0?Math.ceil((now-new Date(Math.min(...filtered.map(r=>new Date(r['Borrow Time'])))))/86400000)+1:30);
+    for(let i=Math.min(days,29);i>=0;i--){const d=new Date(now);d.setDate(now.getDate()-i);labels.push(d.toLocaleDateString('en-GB',{day:'2-digit',month:'short'}));}
+  }
+  return {labels,data:labels.map(l=>trendMap[l]||0)};
+}
+
+function renderDashboard(){
+  if(!cacheRecords.length&&!cacheAgents.length&&!cachePhones.length)return;
+  const filtered=filterRecordsByPeriodAndTeam(null);
+  const stats=computeStats(filtered);
+  const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+
+  document.getElementById('s-borrows').textContent=stats.totalBorrows;
+  document.getElementById('s-calls').textContent  =stats.totalCalls;
+  document.getElementById('s-rate').textContent   =stats.successRate+'%';
+  document.getElementById('s-flagged').textContent=stats.flaggedCount;
+  document.getElementById('s-active').textContent =cachePhones.filter(p=>!p.available).length;
+  document.getElementById('s-avail').textContent  =cachePhones.filter(p=>p.available).length;
+  document.getElementById('s-avail-sub').textContent=`of ${cachePhones.length} units`;
+  document.getElementById('dashUpdated').textContent='Updated '+new Date().toLocaleTimeString();
+
+  // Per-agent stats
+  const agStats={};
+  filtered.forEach(r=>{
+    const name=(r['Agent Name']||'Unknown').toString().trim();
+    if(!agStats[name])agStats[name]={name,team:agTeam[name]||'—',borrows:0,calls:0,successful:0,flagged:0};
+    agStats[name].borrows++;
+    if(r['Return Time']){agStats[name].calls+=parseInt(r['Clients Called (Agent)'])||0;agStats[name].successful+=parseInt(r['Successful Calls (Agent)'])||0;if(r['Verification Status']==='Flagged')agStats[name].flagged++;}
+  });
+  const agentPerf=Object.values(agStats).sort((a,b)=>b.calls-a.calls);
+  const trend=buildTrendData(filtered);
+
+  renderCallsChart(agentPerf);
+  renderRateChart(agentPerf);
+  renderVerifyChart(stats);
+  renderTrendChartFn(trend,'trendChart','trendEmpty',null,'chartTrend');
+  renderPerfTable(agentPerf);
+}
+
+// ── INDIVIDUAL AGENT DASHBOARD ──────────────────────────
+function filterAgentDashSearch(){
+  const q=document.getElementById('agentDashSearch').value.trim().toLowerCase();
+  const sugg=document.getElementById('agentDashSuggestions');
+  if(!q){sugg.style.display='none';return;}
+  const matches=cacheAgents.filter(a=>a.name.toLowerCase().includes(q)).slice(0,8);
+  if(!matches.length){sugg.style.display='none';return;}
+  sugg.innerHTML=matches.map(a=>`<div style="padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(138,115,125,.08)'" onmouseout="this.style.background=''" onclick="selectAgentDash('${a.name.replace(/'/g,"\\'")}')">👤 ${a.name}${a.team?` <span style='font-size:.72rem;color:var(--muted)'>${a.team}</span>`:''}</div>`).join('');
+  sugg.style.display='block';
+}
+
+function selectAgentDash(name){
+  selectedAgentDash=name;
+  document.getElementById('agentDashSearch').value=name;
+  document.getElementById('agentDashSuggestions').style.display='none';
+  document.getElementById('clearAgentBtn').style.display='inline-flex';
+  document.getElementById('agentDashCard').classList.add('show');
+  renderAgentDashboard(name);
+}
+
+function clearAgentDash(){
+  selectedAgentDash=null;
+  document.getElementById('agentDashSearch').value='';
+  document.getElementById('clearAgentBtn').style.display='none';
+  document.getElementById('agentDashCard').classList.remove('show');
+}
+
+// Called from Manage Agents "View Performance" button
+function viewAgentPerformance(name){
+  // Navigate to dashboard
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-dashboard').classList.add('active');
+  document.querySelector('[onclick="showPage(\'dashboard\',this)"]').classList.add('active');
+  closeSidebar();
+  // Select agent
+  setTimeout(()=>selectAgentDash(name),100);
+}
+
+function renderAgentDashboard(name){
+  const agent=cacheAgents.find(a=>a.name===name)||{name,team:''};
+  document.getElementById('agentDashName').textContent='👤 '+name;
+  document.getElementById('agentDashMeta').textContent=(agent.team?`Team: ${agent.team}  ·  `:'')+'Showing: '+getPeriodLabel();
+
+  const filtered=filterRecordsByPeriodAndTeam(name);
+  const stats=computeStats(filtered);
+  const trend=buildTrendData(filtered);
+
+  // Individual stat cards
+  const rate=stats.totalCalls>0?Math.round(stats.totalSuccessful/stats.totalCalls*100):0;
+  document.getElementById('agentStatGrid').innerHTML=`
+    <div class="stat-card"><div class="stat-icon">📲</div><div class="stat-label">Borrows</div><div class="stat-value">${stats.totalBorrows}</div></div>
+    <div class="stat-card"><div class="stat-icon">📞</div><div class="stat-label">Total Calls</div><div class="stat-value">${stats.totalCalls}</div></div>
+    <div class="stat-card green"><div class="stat-icon">🎯</div><div class="stat-label">Success Rate</div><div class="stat-value">${rate}%</div><div class="stat-sub">${stats.totalSuccessful} successful</div></div>
+    <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged</div><div class="stat-value">${stats.flaggedCount}</div></div>
+    <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Verified</div><div class="stat-value">${stats.verifiedCount}</div></div>
+    <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-label">Unverified</div><div class="stat-value">${stats.unverifiedCount}</div></div>
+  `;
+
+  // Trend chart
+  renderTrendChartFn(trend,'agentTrendChart',null,'chartAgentTrend','agentTrendChartInst');
+  // Verify donut
+  renderAgentVerifyDonut(stats);
+
+  // Recent records table
+  const tbody=document.getElementById('agentDashRecords');
+  const recent=[...filtered].reverse().slice(0,10);
+  if(!recent.length){tbody.innerHTML='<tr class="empty-row"><td colspan="6">No records in this period.</td></tr>';return;}
+  tbody.innerHTML=recent.map(r=>{
+    const isActive=!r['Return Time'];const status=r['Verification Status']||'Unverified';
+    return `<tr>
+      <td>Unit ${r['Phone Unit']||'—'}</td>
+      <td>${fmt(r['Borrow Time'])}</td>
+      <td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
+      <td>${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
+      <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+    </tr>`;
+  }).join('');
+}
+
+let agentTrendChartInst=null, agentVerifyInst=null;
+function renderAgentVerifyDonut(stats){
+  const ctx=document.getElementById('agentVerifyChart').getContext('2d');
+  const total=stats.verifiedCount+stats.flaggedCount+stats.unverifiedCount;
+  if(agentVerifyInst){agentVerifyInst.destroy();agentVerifyInst=null;}
+  if(!total){document.getElementById('agentVerifyChart').style.display='none';return;}
+  document.getElementById('agentVerifyChart').style.display='block';
+  agentVerifyInst=new Chart(ctx,{type:'doughnut',data:{labels:['Verified','Flagged','Unverified'],datasets:[{data:[stats.verifiedCount,stats.flaggedCount,stats.unverifiedCount],backgroundColor:['#7a9e7e','#c47a7a','#D2C4C4'],borderWidth:0,hoverOffset:4}]},options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{font:{family:'DM Sans',size:11},color:'#33312E',padding:10}},tooltip:{bodyFont:{family:'DM Sans'},titleFont:{family:'DM Sans'}}}}});
+}
+
+function getPeriodLabel(){
+  if(currentDashPeriod==='day')return 'Today';
+  if(currentDashPeriod==='week')return 'This Week';
+  if(currentDashPeriod==='month')return 'This Month';
+  if(currentDashPeriod==='custom'){
+    const f=document.getElementById('dateFrom').value,t=document.getElementById('dateTo').value;
+    return `${f||'?'} → ${t||'?'}`;
+  }
+  return 'All Time';
+}
+
+document.addEventListener('click',e=>{
+  const sugg=document.getElementById('agentDashSuggestions');
+  if(sugg&&!document.getElementById('agentDashSearch')?.contains(e.target)&&!sugg.contains(e.target))sugg.style.display='none';
+});
+
+// ── CHARTS ─────────────────────────────────────────────
+const cOpts={responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false},tooltip:{bodyFont:{family:'DM Sans'},titleFont:{family:'DM Sans'}}},scales:{x:{grid:{color:'#e0cfc8'},ticks:{font:{family:'DM Sans',size:10},color:'#9a8a8e'}},y:{grid:{color:'#e0cfc8'},ticks:{font:{family:'DM Sans',size:10},color:'#9a8a8e'}}}};
+
+function renderCallsChart(perf){
+  const ctx=document.getElementById('callsChart').getContext('2d');
+  const top=perf.filter(a=>a.calls>0).slice(0,10);
+  const empty=document.getElementById('callsEmpty');
+  if(!top.length){document.getElementById('callsChart').style.display='none';empty.style.display='flex';if(chartCalls){chartCalls.destroy();chartCalls=null;}return;}
+  document.getElementById('callsChart').style.display='block';empty.style.display='none';
+  const data={labels:top.map(a=>a.name),datasets:[{data:top.map(a=>a.calls),backgroundColor:'#8A737D',borderRadius:5,hoverBackgroundColor:'#7a6370'}]};
+  if(chartCalls){chartCalls.data=data;chartCalls.update();return;}
+  chartCalls=new Chart(ctx,{type:'bar',data,options:{...cOpts,indexAxis:'y',scales:{x:{...cOpts.scales.x,beginAtZero:true},y:{...cOpts.scales.y,grid:{display:false}}}}});
+}
+
+function renderRateChart(perf){
+  const ctx=document.getElementById('rateChart').getContext('2d');
+  const top=perf.filter(a=>a.calls>0).slice(0,10).map(a=>({...a,rate:Math.round(a.successful/a.calls*100)})).sort((a,b)=>b.rate-a.rate);
+  const empty=document.getElementById('rateEmpty');
+  if(!top.length){document.getElementById('rateChart').style.display='none';empty.style.display='flex';if(chartRate){chartRate.destroy();chartRate=null;}return;}
+  document.getElementById('rateChart').style.display='block';empty.style.display='none';
+  const data={labels:top.map(a=>a.name),datasets:[{data:top.map(a=>a.rate),backgroundColor:top.map(a=>a.rate>=70?'#7a9e7e':a.rate>=40?'#9F9A7F':'#c47a7a'),borderRadius:5}]};
+  if(chartRate){chartRate.data=data;chartRate.update();return;}
+  chartRate=new Chart(ctx,{type:'bar',data,options:{...cOpts,indexAxis:'y',scales:{x:{...cOpts.scales.x,max:100,beginAtZero:true},y:{...cOpts.scales.y,grid:{display:false}}}}});
+}
+
+function renderVerifyChart(stats){
+  const ctx=document.getElementById('verifyChart').getContext('2d');
+  const empty=document.getElementById('verifyEmpty');
+  const total=stats.verifiedCount+stats.flaggedCount+stats.unverifiedCount;
+  if(!total){document.getElementById('verifyChart').style.display='none';empty.style.display='flex';if(chartVerify){chartVerify.destroy();chartVerify=null;}return;}
+  document.getElementById('verifyChart').style.display='block';empty.style.display='none';
+  const data={labels:['Verified','Flagged','Unverified'],datasets:[{data:[stats.verifiedCount,stats.flaggedCount,stats.unverifiedCount],backgroundColor:['#7a9e7e','#c47a7a','#D2C4C4'],borderWidth:0,hoverOffset:4}]};
+  if(chartVerify){chartVerify.data=data;chartVerify.update();return;}
+  chartVerify=new Chart(ctx,{type:'doughnut',data,options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{font:{family:'DM Sans',size:11},color:'#33312E',padding:10}},tooltip:{bodyFont:{family:'DM Sans'},titleFont:{family:'DM Sans'}}}}});
+}
+
+function renderTrendChartFn(trend,canvasId,emptyId,instRefStr,instKey){
+  const ctx=document.getElementById(canvasId).getContext('2d');
+  const hasData=trend.data.some(v=>v>0);
+  if(emptyId){const empty=document.getElementById(emptyId);if(!hasData){document.getElementById(canvasId).style.display='none';empty.style.display='flex';return;}document.getElementById(canvasId).style.display='block';empty.style.display='none';}
+  const data={labels:trend.labels,datasets:[{data:trend.data,backgroundColor:'#D2B0A2',borderRadius:4,hoverBackgroundColor:'#8A737D'}]};
+  if(instKey==='agentTrendChartInst'){
+    if(agentTrendChartInst){agentTrendChartInst.data=data;agentTrendChartInst.update();return;}
+    agentTrendChartInst=new Chart(ctx,{type:'bar',data,options:{...cOpts,scales:{x:{...cOpts.scales.x,grid:{display:false}},y:{...cOpts.scales.y,beginAtZero:true,ticks:{...cOpts.scales.y.ticks,stepSize:1}}}}});
+  }else{
+    if(chartTrend){chartTrend.data=data;chartTrend.update();return;}
+    chartTrend=new Chart(ctx,{type:'bar',data,options:{...cOpts,scales:{x:{...cOpts.scales.x,grid:{display:false}},y:{...cOpts.scales.y,beginAtZero:true,ticks:{...cOpts.scales.y.ticks,stepSize:1}}}}});
+  }
+}
+
+function renderPerfTable(perf){
+  const tbody=document.getElementById('perfBody');
+  if(!perf.length){tbody.innerHTML='<tr class="empty-row"><td colspan="8">No data for this period.</td></tr>';return;}
+  tbody.innerHTML=perf.map((a,i)=>{
+    const rate=a.calls>0?Math.round(a.successful/a.calls*100):0;
+    const rc=rate>=70?'var(--green)':rate>=40?'var(--yellow)':'var(--red)';
+    return `<tr>
+      <td style="color:var(--muted)">${i+1}</td>
+      <td style="font-weight:600">${a.name}</td>
+      <td style="font-size:.76rem;color:var(--muted)">${a.team||'—'}</td>
+      <td>${a.borrows}</td><td>${a.calls}</td><td>${a.successful}</td>
+      <td style="font-weight:700;color:${rc}">${a.calls>0?rate+'%':'—'}</td>
+      <td>${a.flagged>0?`<span class="tag tag-flagged">${a.flagged}</span>`:'0'}</td>
+    </tr>`;
+  }).join('');
+}
+
+// ── PRINT ─────────────────────────────────────────────
+function printDashboard(){
+  window.print();
+}
+
+// ── TEAM DROPDOWNS ────────────────────────────────────
+function populateTeamDropdowns(){
+  ['dashTeamFilter','newAgentTeam','bulkDefaultTeam'].forEach(id=>{
+    const sel=document.getElementById(id);if(!sel)return;
+    const prev=sel.value;
+    const base=id==='dashTeamFilter'?'<option value="all">All Teams</option>':'<option value="">— No Team —</option>';
+    sel.innerHTML=base;
+    cacheTeams.forEach(t=>{const o=document.createElement('option');o.value=t.teamName;o.textContent=t.teamName;sel.appendChild(o);});
+    if(prev)sel.value=prev;
+  });
+}
+
+// ── RECORDS ───────────────────────────────────────────
+function filterRecords(){
+  const q=(document.getElementById('recordSearch')?.value||'').toLowerCase();
+  const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+  state.records.filtered=q?state.records.data.filter(r=>(r['Agent Name']||'').toLowerCase().includes(q)||(r['Phone Unit']||'').toString().toLowerCase().includes(q)||(r['Serial No.']||'').toLowerCase().includes(q)||(r['Purpose/Notes']||'').toLowerCase().includes(q)):[...state.records.data];
+  state.records.page=1;renderRecordsTable(agTeam);
+}
+function renderRecordsTable(agTeam){
+  if(!agTeam){agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});}
+  const {filtered,page}=state.records;
+  const tbody=document.getElementById('recordsBody');
+  const total=filtered.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  const start=(page-1)*PAGE_SIZE,slice=filtered.slice(start,start+PAGE_SIZE);
+  document.getElementById('recordCount').textContent=total?`${total} record${total!==1?'s':''}`:'' ;
+  if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="12">No records found.</td></tr>';document.getElementById('recordsPagination').innerHTML='';return;}
+  tbody.innerHTML=slice.map(r=>{
+    const isActive=!r['Return Time'];const status=r['Verification Status']||'Unverified';
+    const team=agTeam[r['Agent Name']?.toString().trim()]||'—';
+    return `<tr>
+      <td>${r['Agent Name']||'—'}</td><td style="font-size:.74rem;color:var(--muted)">${team}</td>
+      <td>Unit ${r['Phone Unit']||'—'}</td><td>${r['Serial No.']||'—'}</td>
+      <td>${fmt(r['Borrow Time'])}</td><td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
+      <td style="max-width:100px;word-break:break-word">${r['Purpose/Notes']||'—'}</td>
+      <td>${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
+      <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
+      <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
+      <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+    </tr>`;
+  }).join('');
+  renderPagination('recordsPagination',page,pages,p=>{state.records.page=p;renderRecordsTable();});
+}
+
+// ── XML UPLOAD ────────────────────────────────────────
+function xmlDragOver(e){e.preventDefault();document.getElementById('xmlDrop').classList.add('drag');}
+function xmlDragLeave(e){document.getElementById('xmlDrop').classList.remove('drag');}
+function xmlDrop(e){e.preventDefault();document.getElementById('xmlDrop').classList.remove('drag');const f=e.dataTransfer?.files[0];if(f)handleXmlFile(f);}
+
+function handleXmlFile(file){
+  if(!file||!file.name.endsWith('.xml')){toast('Please upload a valid .xml file.','error');return;}
+  const reader=new FileReader();
+  reader.onload=e=>{
+    try{
+      const parser=new DOMParser();
+      const xml=parser.parseFromString(e.target.result,'application/xml');
+      if(xml.querySelector('parsererror')){toast('Invalid XML file. Please check the format.','error');return;}
+      const nodes=xml.querySelectorAll('agent');
+      if(!nodes.length){toast('No <agent> elements found in XML.','error');return;}
+      parsedXmlAgents=[];
+      nodes.forEach(n=>{
+        const name=n.getAttribute('name')||n.textContent?.trim();
+        const team=n.getAttribute('team')||n.getAttribute('manager')||'';
+        if(name)parsedXmlAgents.push({name:name.trim(),team:team.trim()});
+      });
+      document.getElementById('xmlStatus').textContent=`✅ ${parsedXmlAgents.length} agent(s) ready to import`;
+      toast(`Loaded ${parsedXmlAgents.length} agents from XML.`,'success');
+    }catch(err){toast('Failed to parse XML: '+err.message,'error');}
+  };
+  reader.readAsText(file);
+}
+
+// ── BULK IMPORT ───────────────────────────────────────
+function toggleBulk(){document.getElementById('bulkPanel').classList.toggle('show');}
+
+async function bulkImport(){
+  let toImport=[];
+
+  // Merge XML agents if loaded
+  if(parsedXmlAgents.length>0){
+    parsedXmlAgents.forEach(a=>{if(!toImport.find(x=>x.name===a.name))toImport.push(a);});
+  }
+
+  // Parse text area
+  const raw=document.getElementById('bulkInput').value.trim();
+  const defaultTeam=document.getElementById('bulkDefaultTeam').value;
+  if(raw){
+    raw.split(/[\n,]/).forEach(line=>{
+      const parts=line.split('|');
+      const name=parts[0].trim();
+      const team=(parts[1]?.trim())||defaultTeam||'';
+      if(name&&!toImport.find(x=>x.name===name))toImport.push({name,team});
+    });
+  }
+
+  if(!toImport.length)return toast('Please paste names or upload an XML file.','error');
+
+  const newOnes=toImport.filter(a=>!state.agents.data.some(x=>x.name===a.name));
+  const dupes=toImport.length-newOnes.length;
+  if(!newOnes.length){toast(`All ${dupes} name(s) already exist.`,'error');return;}
+
+  state.agents.data.push(...newOnes);
+  cacheAgents=[...state.agents.data]; filterAgents(); populateTeamDropdowns();
+  document.getElementById('bulkInput').value='';
+  document.getElementById('xmlStatus').textContent='';
+  parsedXmlAgents=[];
+  document.getElementById('bulkPanel').classList.remove('show');
+  toast(`⚡ Importing ${newOnes.length} agent(s)…`,'success');
+
+  const results=await Promise.all(newOnes.map(a=>api({action:'addAgent',name:a.name,team:a.team})));
+  const failed=results.filter(r=>!r.success);
+  if(failed.length){
+    newOnes.forEach((a,i)=>{if(!results[i].success)state.agents.data=state.agents.data.filter(x=>x.name!==a.name);});
+    cacheAgents=[...state.agents.data];filterAgents();
+    toast(`⚠️ ${newOnes.length-failed.length} added, ${failed.length} failed.`,'error');
+  }else{toast(dupes>0?`✅ ${newOnes.length} imported, ${dupes} skipped.`:`✅ ${newOnes.length} imported!`,'success');}
+}
+
+// ── AGENTS ────────────────────────────────────────────
+function filterAgents(){
+  const q=(document.getElementById('agentSearch')?.value||'').toLowerCase();
+  state.agents.filtered=q?state.agents.data.filter(a=>a.name.toLowerCase().includes(q)||a.team.toLowerCase().includes(q)):[...state.agents.data];
+  state.agents.page=1;renderAgentTable();
+}
+function renderAgentTable(){
+  const {filtered,page}=state.agents;
+  const tbody=document.getElementById('agentTableBody');
+  const total=filtered.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  const start=(page-1)*PAGE_SIZE,slice=filtered.slice(start,start+PAGE_SIZE);
+  document.getElementById('agentCount').textContent=total?`${total} agent${total!==1?'s':''}`:'' ;
+  if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No agents found.</td></tr>';document.getElementById('agentPagination').innerHTML='';return;}
+  tbody.innerHTML=slice.map((a,i)=>{
+    const teamOpts=['<option value="">— No Team —</option>',...cacheTeams.map(t=>`<option value="${t.teamName}"${a.team===t.teamName?' selected':''}>${t.teamName}</option>`)].join('');
+    return `<tr>
+      <td style="color:var(--muted);width:36px">${start+i+1}</td>
+      <td style="font-weight:500">👤 ${a.name}</td>
+      <td><select onchange="assignTeam('${a.name.replace(/'/g,"\\'")}',this.value)" style="width:130px;padding:5px 8px;font-size:.8rem;border-radius:7px;border:1.5px solid var(--border);background:#faf7f5">${teamOpts}</select></td>
+      <td style="display:flex;gap:5px;flex-wrap:wrap">
+        <button class="btn btn-info" onclick="viewAgentPerformance('${a.name.replace(/'/g,"\\'")}')">📊 Dashboard</button>
+        <button class="btn btn-warn" onclick="resetAgentPin('${a.name.replace(/'/g,"\\'")}')">Reset PIN</button>
+        <button class="btn btn-danger btn-sm" onclick="removeAgent('${a.name.replace(/'/g,"\\'")}')">Remove</button>
+      </td>
+    </tr>`;
+  }).join('');
+  renderPagination('agentPagination',page,pages,p=>{state.agents.page=p;renderAgentTable();});
+}
+async function addAgent(){
+  const input=document.getElementById('newAgentName');const name=input.value.trim();const team=document.getElementById('newAgentTeam').value;
+  if(!name)return toast('Please enter an agent name.','error');
+  if(state.agents.data.some(a=>a.name===name))return toast('Agent already exists.','error');
+  state.agents.data.push({name,team});cacheAgents=[...state.agents.data];filterAgents();input.value='';document.getElementById('newAgentTeam').value='';toast('Agent added!','success');
+  const res=await api({action:'addAgent',name,team});
+  if(!res.success){state.agents.data=state.agents.data.filter(a=>a.name!==name);cacheAgents=[...state.agents.data];filterAgents();toast('❌ '+res.message,'error');}
+}
+async function removeAgent(name){
+  if(!confirm(`Remove agent "${name}"?`))return;
+  const prev=[...state.agents.data];
+  state.agents.data=state.agents.data.filter(a=>a.name!==name);cacheAgents=[...state.agents.data];filterAgents();toast('Agent removed.','success');
+  const res=await api({action:'removeAgent',name});
+  if(!res.success){state.agents.data=prev;cacheAgents=[...state.agents.data];filterAgents();toast('❌ '+res.message,'error');}
+}
+async function assignTeam(agentName,team){
+  const agent=state.agents.data.find(a=>a.name===agentName);if(agent)agent.team=team;cacheAgents=[...state.agents.data];
+  const res=await api({action:'assignTeam',agentName,team});
+  if(!res.success)toast('❌ '+res.message,'error');else toast(`Team assigned.`,'success');
+}
+async function resetAgentPin(name){
+  if(!confirm(`Reset PIN for "${name}"?`))return;
+  const res=await api({action:'resetPin',agentName:name});
+  if(res.success)toast('✅ PIN reset.','success');else toast('❌ '+res.message,'error');
+}
+
+// ── TEAMS ─────────────────────────────────────────────
+function renderTeamsTable(){
+  const tbody=document.getElementById('teamsTableBody');
+  if(!cacheTeams.length){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No teams yet.</td></tr>';return;}
+  tbody.innerHTML=cacheTeams.map(t=>{
+    const count=cacheAgents.filter(a=>a.team===t.teamName).length;
+    return `<tr>
+      <td style="font-weight:600">${t.teamName}</td><td>${t.manager||'—'}</td>
+      <td><span style="font-size:.8rem;color:var(--muted)">${count} agent${count!==1?'s':''}</span></td>
+      <td><button class="btn btn-danger btn-sm" onclick="removeTeam('${t.teamName.replace(/'/g,"\\'")}')">Remove</button></td>
+    </tr>`;
+  }).join('');
+}
+async function addTeam(){
+  const name=document.getElementById('newTeamName').value.trim();const mgr=document.getElementById('newTeamManager').value.trim();
+  if(!name)return toast('Please enter a team name.','error');
+  if(cacheTeams.find(t=>t.teamName===name))return toast('Team already exists.','error');
+  cacheTeams.push({teamName:name,manager:mgr});renderTeamsTable();populateTeamDropdowns();
+  document.getElementById('newTeamName').value='';document.getElementById('newTeamManager').value='';
+  toast('Team added!','success');
+  const res=await api({action:'addTeam',teamName:name,manager:mgr});
+  if(!res.success){cacheTeams=cacheTeams.filter(t=>t.teamName!==name);renderTeamsTable();populateTeamDropdowns();toast('❌ '+res.message,'error');}
+}
+async function removeTeam(name){
+  if(!confirm(`Remove team "${name}"?`))return;
+  const prev=[...cacheTeams];cacheTeams=cacheTeams.filter(t=>t.teamName!==name);renderTeamsTable();populateTeamDropdowns();toast('Team removed.','success');
+  const res=await api({action:'removeTeam',teamName:name});
+  if(!res.success){cacheTeams=prev;renderTeamsTable();populateTeamDropdowns();toast('❌ '+res.message,'error');}
+}
+
+// ── PHONES ────────────────────────────────────────────
+function filterPhones(){
+  const q=(document.getElementById('phoneSearch')?.value||'').toLowerCase();
+  state.phones.filtered=q?state.phones.data.filter(p=>p.unitNo.toLowerCase().includes(q)||p.serialNo.toLowerCase().includes(q)):[...state.phones.data];
+  state.phones.page=1;renderPhoneTable();
+}
+function renderPhoneTable(){
+  const {filtered,page}=state.phones;
+  const tbody=document.getElementById('phoneTableBody');
+  const total=filtered.length,pages=Math.max(1,Math.ceil(total/PAGE_SIZE));
+  const start=(page-1)*PAGE_SIZE,slice=filtered.slice(start,start+PAGE_SIZE);
+  document.getElementById('phoneCount').textContent=total?`${total} unit${total!==1?'s':''}`:'' ;
+  if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No units found.</td></tr>';document.getElementById('phonePagination').innerHTML='';return;}
+  tbody.innerHTML=slice.map(p=>`<tr>
+    <td>Unit ${p.unitNo}</td><td>${p.serialNo}</td>
+    <td><span class="tag ${p.available?'tag-verified':'tag-flagged'}">${p.available?'✅ Available':'🔴 Borrowed'}</span></td>
+    <td>${p.available?`<button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>`:`<span style="color:var(--muted);font-size:.74rem">Return first</span>`}</td>
+  </tr>`).join('');
+  renderPagination('phonePagination',page,pages,p=>{state.phones.page=p;renderPhoneTable();});
+}
+async function addPhone(){
+  const unitNo=document.getElementById('newUnitNo').value.trim();const serialNo=document.getElementById('newSerialNo').value.trim();
+  if(!unitNo||!serialNo)return toast('Please enter both unit number and serial number.','error');
+  if(state.phones.data.find(p=>p.unitNo===unitNo))return toast('Unit number already exists.','error');
+  state.phones.data.push({unitNo,serialNo,available:true});cachePhones=[...state.phones.data];filterPhones();
+  document.getElementById('newUnitNo').value='';document.getElementById('newSerialNo').value='';
+  toast('Phone unit added!','success');lockWrites(20000);
+  const res=await api({action:'addPhone',unitNo,serialNo});lockWrites(0);
+  if(!res.success){state.phones.data=state.phones.data.filter(p=>p.unitNo!==unitNo);cachePhones=[...state.phones.data];filterPhones();toast('❌ '+res.message,'error');}
+}
+async function removePhone(unitNo){
+  if(!confirm(`Remove Unit ${unitNo}?`))return;
+  const prev=[...state.phones.data];
+  state.phones.data=state.phones.data.filter(p=>p.unitNo!==unitNo);cachePhones=[...state.phones.data];filterPhones();toast('Phone unit removed.','success');lockWrites(10000);
+  const res=await api({action:'removePhone',unitNo});lockWrites(0);
+  if(!res.success){state.phones.data=prev;cachePhones=[...state.phones.data];filterPhones();toast('❌ '+res.message,'error');}
+}
+
+// ── PAGINATION ────────────────────────────────────────
+function renderPagination(id,cur,total,cb){
+  const el=document.getElementById(id);if(total<=1){el.innerHTML='';return;}
+  let h='';
+  h+=`<button class="pg-btn" ${cur===1?'disabled':''} onclick="(${cb.toString()})(${cur-1})">‹</button>`;
+  let s=Math.max(1,cur-2),e=Math.min(total,s+4);if(e-s<4)s=Math.max(1,e-4);
+  if(s>1){h+=`<button class="pg-btn" onclick="(${cb.toString()})(1)">1</button>`;if(s>2)h+=`<span class="pg-info">…</span>`;}
+  for(let i=s;i<=e;i++)h+=`<button class="pg-btn${i===cur?' active':''}" onclick="(${cb.toString()})(${i})">${i}</button>`;
+  if(e<total){if(e<total-1)h+=`<span class="pg-info">…</span>`;h+=`<button class="pg-btn" onclick="(${cb.toString()})(${total})">${total}</button>`;}
+  h+=`<button class="pg-btn" ${cur===total?'disabled':''} onclick="(${cb.toString()})(${cur+1})">›</button>`;
+  h+=`<span class="pg-info">Page ${cur} of ${total}</span>`;el.innerHTML=h;
+}
+
+// ── UNRETURNED ────────────────────────────────────────
+function updateUnreturnedBadge(data){
+  const badge=document.getElementById('unreturnedBadge');
+  if(!data||!data.success||!data.unreturned){badge.style.display='none';return;}
+  const oc=data.unreturned.filter(r=>r.status==='Overdue').length;
+  badge.style.display=oc>0?'inline-block':'none';badge.textContent=oc;
+}
+async function loadUnreturned(){
+  const tbody=document.getElementById('unreturnedBody');
+  const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+  try{
+    const data=await api({action:'getUnreturned'});
+    document.getElementById('unreturnedUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+    updateUnreturnedBadge(data);
+    if(!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="6">✅ All units have been returned.</td></tr>';return;}
+    tbody.innerHTML=data.unreturned.map(r=>`<tr>
+      <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
+      <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
+      <td>${r.status==='Overdue'?'<span class="tag tag-overdue">⚠️ Overdue</span>':'<span class="tag tag-today">🟢 Active Today</span>'}</td>
+    </tr>`).join('');
+  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="6">Failed to load.</td></tr>';}
+}
+
+// ── HISTORY ───────────────────────────────────────────
+async function populateHistoryUnits(){
+  const sel=document.getElementById('historyUnit');if(sel.options.length>1)return;
+  state.phones.data.forEach(p=>{const o=document.createElement('option');o.value=p.unitNo;o.textContent=`Unit ${p.unitNo} (SN: ${p.serialNo})`;sel.appendChild(o);});
+}
+function setHistFilter(val,el){currentHistFilter=val;document.querySelectorAll('#page-history .filter-tab').forEach(t=>t.classList.remove('active'));el.classList.add('active');}
+async function loadHistory(){
+  const tbody=document.getElementById('historyBody');const unitNo=document.getElementById('historyUnit').value;
+  const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+  tbody.innerHTML='<tr class="empty-row"><td colspan="11">Loading…</td></tr>';
+  try{
+    const payload={action:'getRecords'};if(unitNo)payload.unitNo=unitNo;if(currentHistFilter!=='all')payload.filter=currentHistFilter;
+    const data=await api(payload);
+    if(!data.success||!data.records.length){tbody.innerHTML='<tr class="empty-row"><td colspan="11">No records found.</td></tr>';return;}
+    tbody.innerHTML=[...data.records].reverse().map(r=>{
+      const isActive=!r['Return Time'];const status=r['Verification Status']||'Unverified';
+      return `<tr>
+        <td>${r['Agent Name']||'—'}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r['Agent Name']?.toString().trim()]||'—'}</td>
+        <td>Unit ${r['Phone Unit']||'—'}</td><td>${fmt(r['Borrow Time'])}</td><td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
+        <td style="max-width:100px;word-break:break-word">${r['Purpose/Notes']||'—'}</td>
+        <td>${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
+        <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
+        <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
+        <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
+        <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+      </tr>`;
+    }).join('');
+  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="11">Failed to load.</td></tr>';}
+}
+
+// ── VERIFY ────────────────────────────────────────────
+async function loadVerify(){
+  const tbody=document.getElementById('verifyBody');
+  try{
+    const data=await api({action:'getRecords'});
+    document.getElementById('verifyUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+    if(!data.success){tbody.innerHTML='<tr class="empty-row"><td colspan="9">Failed to load.</td></tr>';return;}
+    const returned=data.records.filter(r=>r['Return Time']);
+    if(!returned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="9">No returned records yet.</td></tr>';return;}
+    tbody.innerHTML=[...returned].reverse().map(r=>{
+      const rid=r['Record ID'];
+      const ov=verifyOverrides[rid];
+      const status=ov?ov.status:(r['Verification Status']||'Unverified');
+      const aCval=ov?ov.adminCalls:(r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'');
+      const aSval=ov?ov.adminSucc:(r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'');
+      const saved=ov&&ov.saved;
+      return `<tr id="vrow-${rid}">
+        <td>${r['Agent Name']||'—'}</td><td>Unit ${r['Phone Unit']||'—'}</td><td>${fmt(r['Return Time'])}</td>
+        <td style="font-weight:700;color:var(--primary)">${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
+        <td><input type="number" class="verify-input" id="vc-${rid}" min="0" placeholder="0" value="${aCval}" oninput="markUnsaved('${rid}')"/>${saved&&aCval!==''?`<div class="verify-saved-note">✓ ${aCval}</div>`:''}</td>
+        <td style="font-weight:700;color:var(--primary)">${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
+        <td><input type="number" class="verify-input" id="vs-${rid}" min="0" placeholder="0" value="${aSval}" oninput="markUnsaved('${rid}')"/>${saved&&aSval!==''?`<div class="verify-saved-note">✓ ${aSval}</div>`:''}</td>
+        <td><span class="tag ${tagCls(status)}" id="vtag-${rid}">${status}</span></td>
+        <td><button class="btn btn-verify" id="vsave-${rid}" onclick="verifyRecord('${rid}')" type="button" style="${saved?'opacity:.5;cursor:default;':''}">${saved?'✓ Saved':'Save'}</button></td>
+      </tr>`;
+    }).join('');
+  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="9">Failed to load.</td></tr>';}
+}
+function markUnsaved(rid){
+  if(verifyOverrides[rid])verifyOverrides[rid].saved=false;
+  const btn=document.getElementById('vsave-'+rid);
+  if(btn){btn.textContent='Save';btn.style.opacity='1';btn.style.cursor='pointer';}
+}
+async function verifyRecord(rid){
+  const ci=document.getElementById('vc-'+rid),si=document.getElementById('vs-'+rid);if(!ci||!si)return;
+  const adminCalls=ci.value,adminSucc=si.value;
+  if(adminCalls===''||adminSucc==='')return toast('Please enter both verified counts.','error');
+  if(parseInt(adminSucc)>parseInt(adminCalls))return toast('Successful cannot exceed total calls.','error');
+  const saveBtn=document.getElementById('vsave-'+rid);if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='Saving…';}
+  const row=document.getElementById('vrow-'+rid);
+  const agentCalls=parseInt(row?.cells[3]?.textContent)||0;const agentSucc=parseInt(row?.cells[5]?.textContent)||0;
+  const newStatus=(agentCalls===parseInt(adminCalls)&&agentSucc===parseInt(adminSucc))?'Verified':'Flagged';
+  try{
+    const res=await api({action:'verifyRecord',recordId:rid,adminCalls:parseInt(adminCalls),adminSuccessful:parseInt(adminSucc)});
+    if(res.success){
+      const tag=document.getElementById('vtag-'+rid);if(tag){tag.textContent=newStatus;tag.className='tag '+tagCls(newStatus);}
+      verifyOverrides[rid]={adminCalls:parseInt(adminCalls),adminSucc:parseInt(adminSucc),status:newStatus,saved:true};
+      if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='✓ Saved';saveBtn.style.opacity='.5';saveBtn.style.cursor='default';}
+      const vcNote=ci.parentElement.querySelector('.verify-saved-note');const vsNote=si.parentElement.querySelector('.verify-saved-note');
+      if(vcNote)vcNote.textContent=`✓ ${adminCalls}`;else ci.insertAdjacentHTML('afterend',`<div class="verify-saved-note">✓ ${adminCalls}</div>`);
+      if(vsNote)vsNote.textContent=`✓ ${adminSucc}`;else si.insertAdjacentHTML('afterend',`<div class="verify-saved-note">✓ ${adminSucc}</div>`);
+      toast(newStatus==='Verified'?'✅ Verified!':'🚩 Flagged.',newStatus==='Verified'?'success':'error');
+    }else{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='Retry';saveBtn.style.opacity='1';}toast('❌ '+res.message,'error');}
+  }catch{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='Retry';}toast('❌ Connection error.','error');}
+}
+
+// ── HELPERS ───────────────────────────────────────────
+function tagCls(s){return s==='Verified'?'tag-verified':s==='Flagged'?'tag-flagged':'tag-unverified';}
+function fmt(val){if(!val)return '—';const d=new Date(val);return isNaN(d)?val:d.toLocaleString('en-GB',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'});}
+let toastT=null;
+function toast(msg,type){const el=document.getElementById('toast');el.textContent=msg;el.className=`toast ${type} show`;if(toastT)clearTimeout(toastT);toastT=setTimeout(()=>el.classList.remove('show'),4000);}
+</script>
+</body>
+</html>

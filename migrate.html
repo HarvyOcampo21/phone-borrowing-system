@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Phone Borrowing System — Data Migration</title>
+<style>
+  body { font-family: -apple-system, Segoe UI, sans-serif; max-width: 760px; margin: 40px auto; padding: 0 20px; color: #222; }
+  h1 { font-size: 1.4rem; }
+  .row { margin: 14px 0; padding: 14px; border: 1px solid #ddd; border-radius: 8px; }
+  .row label { display: block; font-weight: 600; margin-bottom: 6px; }
+  .row small { color: #666; display: block; margin-top: 4px; }
+  button { background: #1a73e8; color: #fff; border: none; padding: 10px 18px; border-radius: 6px; font-size: 1rem; cursor: pointer; margin-top: 16px; }
+  button:disabled { background: #999; cursor: not-allowed; }
+  #log { white-space: pre-wrap; background: #111; color: #0f0; padding: 14px; border-radius: 8px; font-family: monospace; font-size: 0.85rem; margin-top: 20px; max-height: 400px; overflow-y: auto; }
+  .warn { background: #fff3cd; border: 1px solid #ffe69c; padding: 12px; border-radius: 8px; margin-bottom: 20px; }
+</style>
+</head>
+<body>
+  <h1>Phone Borrowing System — one-time data migration</h1>
+  <div class="warn">
+    Run this <strong>once</strong>, on your own machine, after deploying <code>firestore.rules</code>.
+    It writes directly into Firestore using the same <code>js/firebase-config.js</code> as the main app.
+    Re-running it will overwrite existing docs with the same IDs — safe to re-run if an earlier run
+    failed partway through, but don't run it against a Firestore project that already has live traffic.
+  </div>
+
+  <p>In Google Sheets, open each tab and use <strong>File → Download → Comma Separated Values (.csv)</strong>,
+  then select the matching file below. Only the tabs you actually have need to be filled in.</p>
+
+  <div class="row">
+    <label>Agents sheet (columns: Agent Name, Team)</label>
+    <input type="file" id="fAgents" accept=".csv">
+  </div>
+  <div class="row">
+    <label>Teams sheet (columns: Team Name, Manager)</label>
+    <input type="file" id="fTeams" accept=".csv">
+  </div>
+  <div class="row">
+    <label>Phones sheet (columns: Unit No, Serial No)</label>
+    <input type="file" id="fPhones" accept=".csv">
+  </div>
+  <div class="row">
+    <label>Pins sheet (columns: Agent Name, PIN)</label>
+    <input type="file" id="fPins" accept=".csv">
+  </div>
+  <div class="row">
+    <label>Admins sheet (columns: Admin ID, Username, Password)</label>
+    <input type="file" id="fAdmins" accept=".csv">
+  </div>
+  <div class="row">
+    <label>Records sheet (exact header row: Record ID, Agent Name, Phone Unit, Serial No.,
+      Borrow Time, Return Time, Purpose/Notes, Clients Called (Agent), Successful Calls (Agent),
+      Clients Called (Admin), Successful Calls (Admin), Verification Status)</label>
+    <input type="file" id="fRecords" accept=".csv">
+  </div>
+
+  <button id="runBtn">Import into Firestore</button>
+  <div id="log"></div>
+
+<script type="module">
+  import { db } from "./js/firebase-config.js";
+  import {
+    doc, setDoc, updateDoc, getDoc,
+  } from "https://www.gstatic.com/firebasejs/10.13.2/firebase-firestore.js";
+
+  const logEl = document.getElementById("log");
+  const log = (msg) => { logEl.textContent += msg + "\n"; logEl.scrollTop = logEl.scrollHeight; };
+
+  function slug(s) {
+    return s.toString().trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_\-]/g, "");
+  }
+
+  // Minimal CSV parser: handles quoted fields and commas inside quotes.
+  function parseCsv(text) {
+    const rows = [];
+    let row = [], field = "", inQuotes = false;
+    for (let i = 0; i < text.length; i++) {
+      const c = text[i], next = text[i + 1];
+      if (inQuotes) {
+        if (c === '"' && next === '"') { field += '"'; i++; }
+        else if (c === '"') { inQuotes = false; }
+        else { field += c; }
+      } else {
+        if (c === '"') inQuotes = true;
+        else if (c === ",") { row.push(field); field = ""; }
+        else if (c === "\r") { /* skip */ }
+        else if (c === "\n") { row.push(field); rows.push(row); row = []; field = ""; }
+        else field += c;
+      }
+    }
+    if (field.length || row.length) { row.push(field); rows.push(row); }
+    return rows.filter((r) => r.some((f) => f.trim() !== ""));
+  }
+
+  async function readFile(inputEl) {
+    const file = inputEl.files[0];
+    if (!file) return null;
+    const text = await file.text();
+    const rows = parseCsv(text);
+    if (rows.length < 2) return [];
+    const headers = rows[0].map((h) => h.trim());
+    return rows.slice(1).map((r) => {
+      const obj = {};
+      headers.forEach((h, i) => (obj[h] = (r[i] ?? "").trim()));
+      return obj;
+    });
+  }
+
+  function parseSheetDate(v) {
+    if (!v) return null;
+    const d = new Date(v);
+    return isNaN(d) ? null : d;
+  }
+
+  document.getElementById("runBtn").onclick = async () => {
+    document.getElementById("runBtn").disabled = true;
+    logEl.textContent = "";
+    try {
+      // 1) Agents
+      const agentsRows = await readFile(document.getElementById("fAgents"));
+      if (agentsRows) {
+        for (const r of agentsRows) {
+          const name = r["Agent Name"] || r["Name"];
+          if (!name) continue;
+          await setDoc(doc(db, "agents", slug(name)), {
+            name: name.trim(),
+            team: (r["Team"] || "").trim(),
+            pin: "",
+            activeBorrowUnit: null,
+            activeRecordId: null,
+          });
+          log(`Agent: ${name}`);
+        }
+      }
+
+      // 2) Teams
+      const teamsRows = await readFile(document.getElementById("fTeams"));
+      if (teamsRows) {
+        for (const r of teamsRows) {
+          const teamName = r["Team Name"] || r["TeamName"];
+          if (!teamName) continue;
+          await setDoc(doc(db, "teams", slug(teamName)), {
+            teamName: teamName.trim(),
+            manager: (r["Manager"] || "").trim(),
+          });
+          log(`Team: ${teamName}`);
+        }
+      }
+
+      // 3) Phones (start all available; step 6 below marks borrowed ones)
+      const phonesRows = await readFile(document.getElementById("fPhones"));
+      if (phonesRows) {
+        for (const r of phonesRows) {
+          const unitNo = r["Unit No"] || r["Unit No."] || r["UnitNo"];
+          if (!unitNo) continue;
+          await setDoc(doc(db, "phones", slug(unitNo)), {
+            unitNo: unitNo.trim(),
+            serialNo: (r["Serial No"] || r["Serial No."] || "").trim(),
+            available: true,
+            borrowedBy: null,
+          });
+          log(`Phone: ${unitNo}`);
+        }
+      }
+
+      // 4) Pins → merged onto agent docs
+      const pinsRows = await readFile(document.getElementById("fPins"));
+      if (pinsRows) {
+        for (const r of pinsRows) {
+          const name = r["Agent Name"];
+          const pin = r["PIN"];
+          if (!name || !pin) continue;
+          const ref = doc(db, "agents", slug(name));
+          if ((await getDoc(ref)).exists()) {
+            await updateDoc(ref, { pin: pin.toString() });
+            log(`PIN set for: ${name}`);
+          } else {
+            log(`⚠ Skipped PIN for "${name}" — agent not found. Import Agents.csv first.`);
+          }
+        }
+      }
+
+      // 5) Admins
+      const adminsRows = await readFile(document.getElementById("fAdmins"));
+      if (adminsRows) {
+        for (const r of adminsRows) {
+          const username = r["Username"];
+          if (!username) continue;
+          await setDoc(doc(db, "admins", slug(username)), {
+            username: username.trim(),
+            password: (r["Password"] || "").trim(),
+          });
+          log(`Admin: ${username}`);
+        }
+      }
+
+      // 6) Records — and reconcile phone/agent "currently borrowed" state
+      const recordsRows = await readFile(document.getElementById("fRecords"));
+      if (recordsRows) {
+        for (const r of recordsRows) {
+          const recordId = r["Record ID"];
+          if (!recordId) continue;
+          const borrowTime = parseSheetDate(r["Borrow Time"]);
+          const returnTime = parseSheetDate(r["Return Time"]);
+          await setDoc(doc(db, "records", recordId.trim()), {
+            recordId: recordId.trim(),
+            agentName: r["Agent Name"] || "",
+            unitNo: r["Phone Unit"] || "",
+            serialNo: r["Serial No."] || "",
+            borrowTime: borrowTime,
+            returnTime: returnTime,
+            notes: r["Purpose/Notes"] || "",
+            clientsCalledAgent: r["Clients Called (Agent)"] ? parseInt(r["Clients Called (Agent)"]) : null,
+            successfulCallsAgent: r["Successful Calls (Agent)"] ? parseInt(r["Successful Calls (Agent)"]) : null,
+            clientsCalledAdmin: r["Clients Called (Admin)"] ? parseInt(r["Clients Called (Admin)"]) : null,
+            successfulCallsAdmin: r["Successful Calls (Admin)"] ? parseInt(r["Successful Calls (Admin)"]) : null,
+            verificationStatus: r["Verification Status"] || "Unverified",
+          });
+          log(`Record: ${recordId}`);
+
+          // Still-borrowed unit: reflect it on the phone + agent docs
+          if (borrowTime && !returnTime) {
+            const unitNo = r["Phone Unit"];
+            const agentName = r["Agent Name"];
+            if (unitNo) {
+              await updateDoc(doc(db, "phones", slug(unitNo)), {
+                available: false,
+                borrowedBy: agentName || null,
+              });
+            }
+            if (agentName) {
+              const agentRef = doc(db, "agents", slug(agentName));
+              if ((await getDoc(agentRef)).exists()) {
+                await updateDoc(agentRef, {
+                  activeBorrowUnit: unitNo || null,
+                  activeRecordId: recordId.trim(),
+                });
+              }
+            }
+            log(`  ↳ marked Unit ${unitNo} as currently borrowed by ${agentName}`);
+          }
+        }
+      }
+
+      log("\n✅ Import complete.");
+    } catch (err) {
+      log("\n❌ Error: " + err.message);
+      console.error(err);
+    }
+    document.getElementById("runBtn").disabled = false;
+  };
+</script>
+</body>
+</html>
