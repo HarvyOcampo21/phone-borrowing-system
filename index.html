@@ -730,45 +730,87 @@
           <div class="logo-icon">📱</div>
         </div>
         <h2 class="modal-title">Phone Borrowing System</h2>
-        <p class="modal-sub">Please sign in to continue</p>
-        <div class="field">
-          <label>Email Address</label>
-          <input
-            type="email"
-            id="loginEmail"
-            placeholder="you@company.com"
-            autocomplete="username"
-          />
+        <p class="modal-sub" id="modalSub">Please sign in to continue</p>
+
+        <div id="loginStepCreds">
+          <div class="field">
+            <label>Email Address</label>
+            <input
+              type="email"
+              id="loginEmail"
+              placeholder="you@company.com"
+              autocomplete="username"
+            />
+          </div>
+          <div class="field" style="margin-bottom: 6px">
+            <label>PIN</label>
+            <input
+              type="password"
+              id="loginPin"
+              placeholder="Enter your PIN"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="8"
+              autocomplete="off"
+              onkeydown="if(event.key==='Enter')submitLogin()"
+            />
+          </div>
+          <div class="field-error" id="loginError"></div>
+          <button class="btn btn-primary" id="loginBtn" onclick="submitLogin()" style="width: 100%">
+            Sign In
+          </button>
+          <div class="modal-row">
+            <label class="check-label">
+              <input type="checkbox" id="keepSignedIn" checked />
+              Keep me signed in
+            </label>
+            <a
+              href="#"
+              class="link-sm"
+              onclick="toast('Contact your admin to reset your PIN.','info');return false;"
+              >Forgot PIN?</a
+            >
+          </div>
         </div>
-        <div class="field" style="margin-bottom: 6px">
-          <label>PIN</label>
-          <input
-            type="password"
-            id="loginPin"
-            placeholder="Enter your PIN"
-            inputmode="numeric"
-            pattern="[0-9]*"
-            maxlength="8"
-            autocomplete="off"
-            onkeydown="if(event.key==='Enter')submitLogin()"
-          />
-        </div>
-        <div class="field-error" id="loginError"></div>
-        <button class="btn btn-primary" id="loginBtn" onclick="submitLogin()" style="width: 100%">
-          Sign In
-        </button>
-        <div class="modal-row">
-          <label class="check-label">
-            <input type="checkbox" id="keepSignedIn" checked />
-            Keep me signed in
-          </label>
-          <a
-            href="#"
-            class="link-sm"
-            onclick="toast('Contact your admin to reset your PIN.','info');return false;"
-            >Forgot PIN?</a
+
+        <div id="loginStepPinSetup" style="display: none">
+          <div class="field">
+            <label>Create PIN</label>
+            <input
+              type="password"
+              id="newPin"
+              placeholder="4–6 digit PIN"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="8"
+              autocomplete="off"
+              onkeydown="if(event.key==='Enter')document.getElementById('confirmPin').focus()"
+            />
+          </div>
+          <div class="field" style="margin-bottom: 6px">
+            <label>Confirm PIN</label>
+            <input
+              type="password"
+              id="confirmPin"
+              placeholder="Re-enter PIN"
+              inputmode="numeric"
+              pattern="[0-9]*"
+              maxlength="8"
+              autocomplete="off"
+              onkeydown="if(event.key==='Enter')submitPinSetup()"
+            />
+          </div>
+          <div class="field-error" id="pinSetupError"></div>
+          <button
+            class="btn btn-primary"
+            id="pinSetupBtn"
+            onclick="submitPinSetup()"
+            style="width: 100%"
           >
+            Create PIN &amp; Continue
+          </button>
         </div>
+
         <button class="btn-link modal-cancel" onclick="closeLogin()">
           Cancel
         </button>
@@ -1031,17 +1073,47 @@
       }
 
       // ---------- login modal ----------
+      let pendingRemember = true;
+      let pendingAgentNameForPinSetup = null;
+
+      function showLoginStep(step) {
+        document.getElementById("loginStepCreds").style.display = step === "creds" ? "" : "none";
+        document.getElementById("loginStepPinSetup").style.display = step === "pinSetup" ? "" : "none";
+        document.getElementById("modalSub").textContent =
+          step === "pinSetup"
+            ? "First time in — create a PIN to finish setting up your account."
+            : "Please sign in to continue";
+      }
+
       function openLogin() {
         document.getElementById("loginOverlay").classList.add("show");
         document.getElementById("loginEmail").value = "";
         document.getElementById("loginPin").value = "";
         document.getElementById("loginError").textContent = "";
+        showLoginStep("creds");
         setTimeout(() => document.getElementById("loginEmail").focus(), 50);
       }
 
       function closeLogin() {
         document.getElementById("loginOverlay").classList.remove("show");
         pendingUnitAfterLogin = null;
+        pendingAgentNameForPinSetup = null;
+      }
+
+      async function completeLogin(agent, remember) {
+        currentAgent = agent;
+        saveSession(currentAgent, remember);
+        if (currentAgent.activeBorrowUnit) await loadActiveRecord();
+        document.getElementById("loginOverlay").classList.remove("show");
+        onAuthChanged();
+
+        const pending = pendingUnitAfterLogin;
+        pendingUnitAfterLogin = null;
+        pendingAgentNameForPinSetup = null;
+        if (pending && !currentAgent.activeBorrowUnit) {
+          const p = allPhones.find((x) => String(x.unitNo) === String(pending));
+          if (p && p.available) openBorrow(p);
+        }
       }
 
       async function submitLogin() {
@@ -1062,18 +1134,15 @@
         try {
           const res = await api({ action: "agentLogin", email, pin });
           if (res.success) {
-            currentAgent = res.agent;
-            saveSession(currentAgent, remember);
-            if (currentAgent.activeBorrowUnit) await loadActiveRecord();
-            document.getElementById("loginOverlay").classList.remove("show");
-            onAuthChanged();
-
-            const pending = pendingUnitAfterLogin;
-            pendingUnitAfterLogin = null;
-            if (pending && !currentAgent.activeBorrowUnit) {
-              const p = allPhones.find((x) => String(x.unitNo) === String(pending));
-              if (p && p.available) openBorrow(p);
-            }
+            await completeLogin(res.agent, remember);
+          } else if (res.needsPinSetup) {
+            pendingRemember = remember;
+            pendingAgentNameForPinSetup = res.agentName;
+            document.getElementById("newPin").value = "";
+            document.getElementById("confirmPin").value = "";
+            document.getElementById("pinSetupError").textContent = "";
+            showLoginStep("pinSetup");
+            setTimeout(() => document.getElementById("newPin").focus(), 50);
           } else {
             err.textContent = res.message || "Invalid email or PIN.";
           }
@@ -1082,6 +1151,48 @@
         }
         btn.disabled = false;
         btn.textContent = "Sign In";
+      }
+
+      async function submitPinSetup() {
+        const newPin = document.getElementById("newPin").value.trim();
+        const confirmPin = document.getElementById("confirmPin").value.trim();
+        const err = document.getElementById("pinSetupError");
+        const btn = document.getElementById("pinSetupBtn");
+        err.textContent = "";
+
+        if (!/^[0-9]{4,8}$/.test(newPin)) {
+          err.textContent = "PIN must be 4–8 digits.";
+          return;
+        }
+        if (newPin !== confirmPin) {
+          err.textContent = "PINs do not match.";
+          return;
+        }
+
+        btn.disabled = true;
+        btn.textContent = "Saving…";
+        try {
+          const res = await api({
+            action: "setPin",
+            agentName: pendingAgentNameForPinSetup,
+            pin: newPin,
+          });
+          if (res.success) {
+            const ag = await api({ action: "getAgent", name: pendingAgentNameForPinSetup });
+            if (ag.success) {
+              await completeLogin(ag.agent, pendingRemember);
+            } else {
+              err.textContent = "PIN saved, but couldn't load your account. Please sign in again.";
+              showLoginStep("creds");
+            }
+          } else {
+            err.textContent = res.message || "Could not save PIN.";
+          }
+        } catch {
+          err.textContent = "Connection error. Please try again.";
+        }
+        btn.disabled = false;
+        btn.textContent = "Create PIN & Continue";
       }
 
       // ---------- screens ----------

@@ -360,7 +360,12 @@ async function agentLogin(data) {
     return { success: false, message: "Invalid email or PIN." };
   const v = snap.docs[0].data();
   if (!v.pin)
-    return { success: false, message: "No PIN set for this account. Please contact your admin." };
+    return {
+      success: false,
+      needsPinSetup: true,
+      agentName: v.name,
+      message: "No PIN set yet. Please create one to continue.",
+    };
   if (v.pin.toString() !== pin)
     return { success: false, message: "Incorrect PIN. Please try again." };
   return {

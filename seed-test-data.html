@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Seed Test Data — Phone Borrowing System</title>
+    <style>
+      body {
+        font-family: system-ui, sans-serif;
+        max-width: 640px;
+        margin: 40px auto;
+        padding: 0 20px;
+        color: #1e293b;
+      }
+      h1 {
+        font-size: 20px;
+      }
+      p {
+        color: #64748b;
+        font-size: 14px;
+      }
+      button {
+        background: #2563eb;
+        color: #fff;
+        border: none;
+        padding: 12px 20px;
+        border-radius: 10px;
+        font-size: 14.5px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      button:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+      #log {
+        margin-top: 20px;
+        background: #0f172a;
+        color: #e2e8f0;
+        font-family: ui-monospace, monospace;
+        font-size: 12.5px;
+        padding: 14px 16px;
+        border-radius: 10px;
+        white-space: pre-wrap;
+        max-height: 420px;
+        overflow-y: auto;
+      }
+      .warn {
+        background: #fffbeb;
+        border: 1px solid #fde68a;
+        color: #92400e;
+        padding: 10px 14px;
+        border-radius: 10px;
+        font-size: 13px;
+        margin-bottom: 16px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>🌱 Seed Test Data</h1>
+    <div class="warn">
+      One-time test helper — delete this file once you're done seeding.
+      It calls your existing <code>addPhone</code> / <code>addAgent</code>
+      / <code>addTeam</code> actions, so it's safe to run more than once
+      (duplicates are skipped, not overwritten).
+    </div>
+    <p>
+      Adds <b>20 test phones</b> (units 801–820, random serials) and
+      <b>10 test agents</b> (name + email + team filled in, PIN left
+      blank so you can test the first-time PIN-creation flow).
+    </p>
+    <button id="runBtn" onclick="runSeed()">Run Seed</button>
+    <div id="log"></div>
+
+    <script type="module" src="./js/firebase-config.js"></script>
+    <script type="module" src="./js/firebase-api.js"></script>
+    <script>
+      const PHONES = [
+        { unitNo: "801", serialNo: "AH62Q7" },
+        { unitNo: "802", serialNo: "C7P7G5" },
+        { unitNo: "803", serialNo: "16A3VU" },
+        { unitNo: "804", serialNo: "4I1GJ0" },
+        { unitNo: "805", serialNo: "2B02PS" },
+        { unitNo: "806", serialNo: "22JJQ9" },
+        { unitNo: "807", serialNo: "6Z56JE" },
+        { unitNo: "808", serialNo: "YG3F68" },
+        { unitNo: "809", serialNo: "8GG53O" },
+        { unitNo: "810", serialNo: "DW3E65" },
+        { unitNo: "811", serialNo: "3R7C7X" },
+        { unitNo: "812", serialNo: "15YWG9" },
+        { unitNo: "813", serialNo: "50OU3T" },
+        { unitNo: "814", serialNo: "B0Y0W4" },
+        { unitNo: "815", serialNo: "Y69NE9" },
+        { unitNo: "816", serialNo: "2DL53N" },
+        { unitNo: "817", serialNo: "3S5B0B" },
+        { unitNo: "818", serialNo: "4OW24S" },
+        { unitNo: "819", serialNo: "W66KB0" },
+        { unitNo: "820", serialNo: "LK9E22" },
+      ];
+
+      const TEAMS = ["Team 1", "Team 2", "Team 3"];
+
+      const AGENTS = [
+        { name: "Amina Reyes", email: "amina.reyes@drivenproperties.com", team: "Team 1" },
+        { name: "Chen Okafor", email: "chen.okafor@drivenproperties.com", team: "Team 2" },
+        { name: "Diego Silva", email: "diego.silva@drivenproperties.com", team: "Team 3" },
+        { name: "Fatima Haddad", email: "fatima.haddad@drivenproperties.com", team: "Team 1" },
+        { name: "Grace Tan", email: "grace.tan@drivenproperties.com", team: "Team 2" },
+        { name: "Hassan Novak", email: "hassan.novak@drivenproperties.com", team: "Team 3" },
+        { name: "Ines Rossi", email: "ines.rossi@drivenproperties.com", team: "Team 1" },
+        { name: "Jacob Kumar", email: "jacob.kumar@drivenproperties.com", team: "Team 2" },
+        { name: "Kavya Botha", email: "kavya.botha@drivenproperties.com", team: "Team 3" },
+        { name: "Liam Lund", email: "liam.lund@drivenproperties.com", team: "Team 1" },
+      ];
+
+      const logEl = document.getElementById("log");
+      function log(msg) {
+        logEl.textContent += msg + "\n";
+        logEl.scrollTop = logEl.scrollHeight;
+      }
+
+      async function runSeed() {
+        const btn = document.getElementById("runBtn");
+        btn.disabled = true;
+        logEl.textContent = "";
+
+        log("Adding teams…");
+        for (const t of TEAMS) {
+          const res = await api({ action: "addTeam", teamName: t });
+          log(`  ${t}: ${res.success ? "added" : res.message}`);
+        }
+
+        log("\nAdding phones…");
+        for (const p of PHONES) {
+          const res = await api({ action: "addPhone", unitNo: p.unitNo, serialNo: p.serialNo });
+          log(`  Unit ${p.unitNo} (${p.serialNo}): ${res.success ? "added" : res.message}`);
+        }
+
+        log("\nAdding agents (PIN left blank on purpose)…");
+        for (const a of AGENTS) {
+          const res = await api({ action: "addAgent", name: a.name, team: a.team, email: a.email });
+          log(`  ${a.name}: ${res.success ? "added" : res.message}`);
+        }
+
+        log("\nDone. Open index.html and try logging in with one of the new agent emails — you'll land on the Create PIN step.");
+        btn.disabled = false;
+      }
+    </script>
+  </body>
+</html>
