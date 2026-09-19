@@ -75,7 +75,6 @@ async function addAgent(data) {
     name,
     team: data.team ? data.team.trim() : "",
     email: data.email ? data.email.trim().toLowerCase() : "",
-    password: data.password ? data.password.toString() : "",
     pin: "",
     activeBorrowUnit: null,
     activeRecordId: null,
@@ -345,23 +344,25 @@ async function resetPin(data) {
   return { success: true, message: "PIN reset. Agent can set a new PIN on next login." };
 }
 
-// ── AGENT LOGIN (Agent Portal — email/password) ─────────────
-// NOTE: agents/{slug} docs need "email" (store lowercase) and
-// "password" fields added manually (or via the updated addAgent)
-// before they can log in here. Same plain-text trust level as
-// the existing PIN system.
+// ── AGENT LOGIN (Agent Portal — email + PIN) ─────────────────
+// NOTE: agents/{slug} docs need an "email" field added manually
+// (or via the updated addAgent) alongside the existing "pin"
+// field before an agent can log in here. Same plain-text trust
+// level as before — this is an internal tool.
 async function agentLogin(data) {
   const email = (data.email || "").trim().toLowerCase();
-  const password = (data.password || "").toString();
-  if (!email || !password)
-    return { success: false, message: "Email and password are required." };
+  const pin = (data.pin || "").toString();
+  if (!email || !pin)
+    return { success: false, message: "Email and PIN are required." };
   const q = query(collection(db, "agents"), where("email", "==", email));
   const snap = await getDocs(q);
   if (snap.empty)
-    return { success: false, message: "Invalid email or password." };
+    return { success: false, message: "Invalid email or PIN." };
   const v = snap.docs[0].data();
-  if ((v.password || "").toString() !== password)
-    return { success: false, message: "Invalid email or password." };
+  if (!v.pin)
+    return { success: false, message: "No PIN set for this account. Please contact your admin." };
+  if (v.pin.toString() !== pin)
+    return { success: false, message: "Incorrect PIN. Please try again." };
   return {
     success: true,
     agent: {

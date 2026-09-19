@@ -741,12 +741,15 @@
           />
         </div>
         <div class="field" style="margin-bottom: 6px">
-          <label>Password</label>
+          <label>PIN</label>
           <input
             type="password"
-            id="loginPassword"
-            placeholder="Enter your password"
-            autocomplete="current-password"
+            id="loginPin"
+            placeholder="Enter your PIN"
+            inputmode="numeric"
+            pattern="[0-9]*"
+            maxlength="8"
+            autocomplete="off"
             onkeydown="if(event.key==='Enter')submitLogin()"
           />
         </div>
@@ -762,8 +765,8 @@
           <a
             href="#"
             class="link-sm"
-            onclick="toast('Contact your admin to reset your password.','info');return false;"
-            >Forgot password?</a
+            onclick="toast('Contact your admin to reset your PIN.','info');return false;"
+            >Forgot PIN?</a
           >
         </div>
         <button class="btn-link modal-cancel" onclick="closeLogin()">
@@ -1031,7 +1034,7 @@
       function openLogin() {
         document.getElementById("loginOverlay").classList.add("show");
         document.getElementById("loginEmail").value = "";
-        document.getElementById("loginPassword").value = "";
+        document.getElementById("loginPin").value = "";
         document.getElementById("loginError").textContent = "";
         setTimeout(() => document.getElementById("loginEmail").focus(), 50);
       }
@@ -1043,13 +1046,13 @@
 
       async function submitLogin() {
         const email = document.getElementById("loginEmail").value.trim().toLowerCase();
-        const password = document.getElementById("loginPassword").value;
+        const pin = document.getElementById("loginPin").value.trim();
         const remember = document.getElementById("keepSignedIn").checked;
         const err = document.getElementById("loginError");
         const btn = document.getElementById("loginBtn");
         err.textContent = "";
 
-        if (!email || !password) {
+        if (!email || !pin) {
           err.textContent = "Please enter both fields.";
           return;
         }
@@ -1057,7 +1060,7 @@
         btn.disabled = true;
         btn.textContent = "Signing in…";
         try {
-          const res = await api({ action: "agentLogin", email, password });
+          const res = await api({ action: "agentLogin", email, pin });
           if (res.success) {
             currentAgent = res.agent;
             saveSession(currentAgent, remember);
@@ -1072,7 +1075,7 @@
               if (p && p.available) openBorrow(p);
             }
           } else {
-            err.textContent = res.message || "Invalid email or password.";
+            err.textContent = res.message || "Invalid email or PIN.";
           }
         } catch {
           err.textContent = "Connection error. Please try again.";
