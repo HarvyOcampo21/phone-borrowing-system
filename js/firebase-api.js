@@ -74,6 +74,8 @@ async function addAgent(data) {
   await setDoc(ref, {
     name,
     team: data.team ? data.team.trim() : "",
+    email: data.email ? data.email.trim().toLowerCase() : "",
+    password: data.password ? data.password.toString() : "",
     pin: "",
     activeBorrowUnit: null,
     activeRecordId: null,
@@ -138,6 +140,7 @@ async function getPhones() {
       serialNo: v.serialNo,
       available: v.available !== false,
       borrowedBy: v.borrowedBy || null,
+      borrowTime: toIso(v.borrowTime),
     });
   });
   return { success: true, phones };
@@ -199,7 +202,11 @@ async function borrowPhone(data) {
         successfulCallsAdmin: null,
         verificationStatus: "Unverified",
       });
-      tx.update(phoneRef, { available: false, borrowedBy: data.agentName });
+      tx.update(phoneRef, {
+        available: false,
+        borrowedBy: data.agentName,
+        borrowTime: Timestamp.now(),
+      });
       tx.update(agentRef, { activeBorrowUnit: data.unitNo, activeRecordId: recordId });
     });
     return { success: true, message: "Phone borrowed successfully!" };
@@ -232,7 +239,7 @@ async function returnPhone(data) {
         clientsCalledAgent: data.clientsCalled,
         successfulCallsAgent: data.successfulCalls,
       });
-      tx.update(phoneRef, { available: true, borrowedBy: null });
+      tx.update(phoneRef, { available: true, borrowedBy: null, borrowTime: null });
       tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
     });
     return { success: true, message: "Phone returned successfully!" };
@@ -338,6 +345,62 @@ async function resetPin(data) {
   return { success: true, message: "PIN reset. Agent can set a new PIN on next login." };
 }
 
+// ── AGENT LOGIN (Agent Portal — email/password) ─────────────
+// NOTE: agents/{slug} docs need "email" (store lowercase) and
+// "password" fields added manually (or via the updated addAgent)
+// before they can log in here. Same plain-text trust level as
+// the existing PIN system.
+async function agentLogin(data) {
+  const email = (data.email || "").trim().toLowerCase();
+  const password = (data.password || "").toString();
+  if (!email || !password)
+    return { success: false, message: "Email and password are required." };
+  const q = query(collection(db, "agents"), where("email", "==", email));
+  const snap = await getDocs(q);
+  if (snap.empty)
+    return { success: false, message: "Invalid email or password." };
+  const v = snap.docs[0].data();
+  if ((v.password || "").toString() !== password)
+    return { success: false, message: "Invalid email or password." };
+  return {
+    success: true,
+    agent: {
+      name: v.name,
+      team: v.team || "",
+      email: v.email || "",
+      activeBorrowUnit: v.activeBorrowUnit || null,
+      activeRecordId: v.activeRecordId || null,
+    },
+  };
+}
+
+// Used to restore a persisted session and to refresh the logged-in
+// agent's active-borrow state after a borrow/return.
+async function getAgent(data) {
+  const snap = await getDoc(doc(db, "agents", slug(data.name)));
+  if (!snap.exists()) return { success: false, message: "Agent not found." };
+  const v = snap.data();
+  return {
+    success: true,
+    agent: {
+      name: v.name,
+      team: v.team || "",
+      email: v.email || "",
+      activeBorrowUnit: v.activeBorrowUnit || null,
+      activeRecordId: v.activeRecordId || null,
+    },
+  };
+}
+
+// Used by the Agent Portal to show borrow time / purpose for the
+// agent's own active session (e.g. on the Return Device screen).
+async function getRecord(data) {
+  const ref = doc(db, "records", data.recordId.toString());
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Record not found." };
+  return { success: true, record: recordToHeaderObj(snap.data()) };
+}
+
 // ── ADMIN LOGIN ──────────────────────────────────────────────
 async function adminLogin(data) {
   const snap = await getDoc(doc(db, "admins", slug(data.username)));
@@ -368,6 +431,9 @@ export async function api(payload) {
       case "getUnreturned": return await getUnreturnedUnits();
       case "verifyRecord":  return await verifyRecord(payload);
       case "adminLogin":    return await adminLogin(payload);
+      case "agentLogin":    return await agentLogin(payload);
+      case "getAgent":      return await getAgent(payload);
+      case "getRecord":     return await getRecord(payload);
       case "checkPin":      return await checkPin(payload);
       case "setPin":        return await setPin(payload);
       case "verifyPin":     return await verifyPin(payload);
