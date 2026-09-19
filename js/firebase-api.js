@@ -34,6 +34,15 @@ function slug(s) {
     .replace(/[^a-z0-9_\-]/g, "");
 }
 
+// Session time limit (hours) before an active/pending-return loan is
+// flagged Overdue. Keep this in sync with OVERDUE_HOURS in index.html —
+// there's no shared build step here, so it's duplicated by design.
+const OVERDUE_HOURS = 2;
+
+// Reasons an admin can hold a unit unavailable after (or instead of) a
+// return. "Other" ships a free-text reason string from the admin UI.
+const HOLD_REASONS = ["Not charged", "SIM restricted", "Under verification (previous borrower)", "Others"];
+
 function toIso(ts) {
   return ts ? ts.toDate().toISOString() : "";
 }
@@ -140,6 +149,9 @@ async function getPhones() {
       available: v.available !== false,
       borrowedBy: v.borrowedBy || null,
       borrowTime: toIso(v.borrowTime),
+      pendingReturn: !!v.pendingReturn,
+      pendingRecordId: v.pendingRecordId || null,
+      unavailableReason: v.unavailableReason || null,
     });
   });
   return { success: true, phones };
@@ -155,6 +167,10 @@ async function addPhone(data) {
     serialNo: data.serialNo.toString().trim(),
     available: true,
     borrowedBy: null,
+    borrowTime: null,
+    pendingReturn: false,
+    pendingRecordId: null,
+    unavailableReason: null,
   });
   return { success: true, message: "Phone unit added." };
 }
@@ -214,6 +230,12 @@ async function borrowPhone(data) {
   }
 }
 
+// Agent taps "Return Phone": this is a SOFT return. It ends the agent's
+// own active session and logs their reported call counts, but does NOT
+// free the unit — the phone stays unavailable (borrowTime is kept, so
+// Overdue can still trigger) until an admin verifies the physical
+// return via resolveReturn(). This exists because an agent can tap the
+// button without actually handing the phone back.
 async function returnPhone(data) {
   const phoneRef = doc(db, "phones", slug(data.unitNo));
   try {
@@ -238,13 +260,103 @@ async function returnPhone(data) {
         clientsCalledAgent: data.clientsCalled,
         successfulCallsAgent: data.successfulCalls,
       });
-      tx.update(phoneRef, { available: true, borrowedBy: null, borrowTime: null });
+      // available/borrowedBy/borrowTime are left as-is on purpose.
+      tx.update(phoneRef, { pendingReturn: true, pendingRecordId: a.activeRecordId });
       tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
     });
-    return { success: true, message: "Phone returned successfully!" };
+    return { success: true, message: "Return submitted. Awaiting verification by admin." };
   } catch (err) {
     return { success: false, message: err.message };
   }
+}
+
+// Admin confirms a physical return (or rejects it) after reviewing the
+// agent's reported call counts against their own count.
+//   decision: "available"   → unit goes back into rotation
+//   decision: "unavailable" → unit is held; `reason` is required and
+//             should be one of HOLD_REASONS (or free text for "Other")
+async function resolveReturn(data) {
+  const phoneRef = doc(db, "phones", slug(data.unitNo));
+  const decision = data.decision === "available" ? "available" : "unavailable";
+  if (decision === "unavailable" && !data.reason)
+    return { success: false, message: "A reason is required to hold this unit unavailable." };
+
+  let verificationStatus = null;
+  try {
+    await runTransaction(db, async (tx) => {
+      const phoneSnap = await tx.get(phoneRef);
+      if (!phoneSnap.exists()) throw new Error("Phone unit not found.");
+      const p = phoneSnap.data();
+      if (!p.pendingReturn || !p.pendingRecordId)
+        throw new Error("This unit has no pending return to verify.");
+
+      const recordRef = doc(db, "records", p.pendingRecordId);
+      const recordSnap = await tx.get(recordRef);
+      if (!recordSnap.exists()) throw new Error("Return record not found.");
+      const r = recordSnap.data();
+
+      const agentCalls = parseInt(r.clientsCalledAgent) || 0;
+      const agentSucc = parseInt(r.successfulCallsAgent) || 0;
+      const adminCalls = parseInt(data.adminCalls);
+      const adminSucc = parseInt(data.adminSuccessful);
+      verificationStatus = agentCalls === adminCalls && agentSucc === adminSucc ? "Verified" : "Flagged";
+
+      tx.update(recordRef, {
+        clientsCalledAdmin: adminCalls,
+        successfulCallsAdmin: adminSucc,
+        verificationStatus,
+      });
+
+      tx.update(phoneRef, {
+        available: decision === "available",
+        borrowedBy: null,
+        borrowTime: null,
+        pendingReturn: false,
+        pendingRecordId: null,
+        unavailableReason: decision === "available" ? null : data.reason.toString().trim(),
+      });
+    });
+    return {
+      success: true,
+      status: verificationStatus,
+      message: decision === "available" ? "Return verified — unit is available." : "Return verified — unit held unavailable.",
+    };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
+
+// Ad-hoc admin action: pull a unit out of rotation for one of the
+// HOLD_REASONS without going through a borrow/return cycle. Refuses if
+// the unit is actively out (still borrowed) or awaiting return
+// verification — those go through resolveReturn instead.
+async function setPhoneHold(data) {
+  const ref = doc(db, "phones", slug(data.unitNo));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Phone unit not found." };
+  const p = snap.data();
+  if (p.pendingReturn)
+    return { success: false, message: "This unit has a pending return — verify it first." };
+  if (p.borrowedBy)
+    return { success: false, message: "This unit is currently borrowed." };
+  if (!data.reason) return { success: false, message: "A reason is required." };
+  await updateDoc(ref, { available: false, unavailableReason: data.reason.toString().trim() });
+  return { success: true, message: "Unit marked unavailable." };
+}
+
+// Ad-hoc admin action: bring a held (non-borrowed) unit back into
+// rotation.
+async function setPhoneAvailable(data) {
+  const ref = doc(db, "phones", slug(data.unitNo));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Phone unit not found." };
+  const p = snap.data();
+  if (p.pendingReturn)
+    return { success: false, message: "This unit has a pending return — verify it first." };
+  if (p.borrowedBy)
+    return { success: false, message: "This unit is currently borrowed." };
+  await updateDoc(ref, { available: true, unavailableReason: null });
+  return { success: true, message: "Unit marked available." };
 }
 
 // ── RECORDS ──────────────────────────────────────────────────
@@ -271,23 +383,26 @@ async function getRecords(data) {
   return { success: true, records };
 }
 
+// "Unreturned" now means: not yet physically confirmed back by an
+// admin — this covers both units still with an agent AND units an
+// agent has clicked Return on but that are awaiting admin verification
+// (pendingReturn). Overdue uses the same OVERDUE_HOURS session limit
+// the Agent Portal shows.
 async function getUnreturnedUnits() {
-  const q = query(collection(db, "records"), where("returnTime", "==", null));
-  const snap = await getDocs(q);
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const snap = await getDocs(collection(db, "phones"));
   const unreturned = [];
   snap.forEach((d) => {
     const v = d.data();
-    const borrowTime = v.borrowTime ? v.borrowTime.toDate() : null;
-    if (!borrowTime) return;
-    const bd = new Date(borrowTime); bd.setHours(0, 0, 0, 0);
+    if (v.available !== false || !v.borrowTime) return; // no active loan clock
+    const borrowTime = v.borrowTime.toDate();
+    const hrs = (Date.now() - borrowTime.getTime()) / 3600000;
     unreturned.push({
-      recordId: v.recordId,
-      agentName: v.agentName,
       unitNo: v.unitNo,
       serialNo: v.serialNo,
+      agentName: v.borrowedBy || "—",
       borrowTime: borrowTime.toISOString(),
-      status: bd < today ? "Overdue" : "Active Today",
+      pendingReturn: !!v.pendingReturn,
+      status: hrs >= OVERDUE_HOURS ? "Overdue" : "Active",
     });
   });
   return { success: true, unreturned };
@@ -433,6 +548,9 @@ export async function api(payload) {
       case "removePhone":   return await removePhone(payload);
       case "borrowPhone":   return await borrowPhone(payload);
       case "returnPhone":   return await returnPhone(payload);
+      case "resolveReturn": return await resolveReturn(payload);
+      case "setPhoneHold":      return await setPhoneHold(payload);
+      case "setPhoneAvailable": return await setPhoneAvailable(payload);
       case "getRecords":    return await getRecords(payload);
       case "getUnreturned": return await getUnreturnedUnits();
       case "verifyRecord":  return await verifyRecord(payload);

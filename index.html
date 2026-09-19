@@ -609,6 +609,7 @@
               <span><span class="dot dot-available"></span>Available</span>
               <span><span class="dot dot-overdue"></span>Overdue</span>
               <span><span class="dot dot-deployed"></span>Deployed</span>
+              <span><span class="dot dot-locked"></span>Unavailable</span>
             </div>
           </div>
 
@@ -824,8 +825,9 @@
 
     <script>
       // How long (in hours) a borrow may run before it's flagged
-      // Overdue on the grid and in the Return screen. Adjust freely.
-      const OVERDUE_HOURS = 24;
+      // Overdue on the grid and in the Return screen. Keep this in
+      // sync with OVERDUE_HOURS in firebase-api.js.
+      const OVERDUE_HOURS = 2;
 
       let currentAgent = null; // {name, team, email, activeBorrowUnit, activeRecordId}
       let allPhones = [];
@@ -952,12 +954,10 @@
 
       function phoneState(p) {
         if (p.available) return { state: "available", mine: false };
+        if (!p.borrowTime) return { state: "held", mine: false }; // admin pulled it from rotation
         const mine = !!(currentAgent && p.borrowedBy === currentAgent.name);
-        let overdue = false;
-        if (p.borrowTime) {
-          const hrs = (Date.now() - new Date(p.borrowTime).getTime()) / 3600000;
-          overdue = hrs >= OVERDUE_HOURS;
-        }
+        const hrs = (Date.now() - new Date(p.borrowTime).getTime()) / 3600000;
+        const overdue = hrs >= OVERDUE_HOURS;
         return { state: overdue ? "overdue" : "deployed", mine };
       }
 
@@ -1007,18 +1007,19 @@
           .map((p) => {
             const st = phoneState(p);
             let cls = "phone-cell";
-            let label = st.state.charAt(0).toUpperCase() + st.state.slice(1);
-            let dotClass = "dot-" + st.state;
+            let label, dotClass;
 
-            if (locked) {
-              if (st.mine) {
-                cls += " cell-mine";
-                label = "Borrowed";
-              } else {
-                cls += " cell-locked";
-                label = "Unavailable";
-                dotClass = "dot-locked";
-              }
+            if (locked && st.mine) {
+              cls += " cell-mine";
+              label = "Borrowed";
+              dotClass = "dot-deployed";
+            } else if (locked || st.state === "held") {
+              cls += " cell-locked";
+              label = "Unavailable";
+              dotClass = "dot-locked";
+            } else {
+              label = st.state.charAt(0).toUpperCase() + st.state.slice(1);
+              dotClass = "dot-" + st.state;
             }
 
             return (
@@ -1059,7 +1060,11 @@
         }
 
         if (!p.available) {
-          toast("This phone is currently borrowed.", "error");
+          const st = phoneState(p);
+          toast(
+            st.state === "held" ? "This phone is currently unavailable." : "This phone is currently borrowed.",
+            "error"
+          );
           return;
         }
 

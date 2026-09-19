@@ -322,6 +322,10 @@
       </div>
       <div class="nav-section">
         <div class="nav-label">Monitoring</div>
+        <div class="nav-item" onclick="showPage('pending',this)">
+          <span class="nav-icon">📥</span>Pending Returns
+          <span class="badge-alert" id="pendingBadge">0</span>
+        </div>
         <div class="nav-item" onclick="showPage('unreturned',this)">
           <span class="nav-icon">⚠️</span>Unreturned Units
           <span class="badge-alert" id="unreturnedBadge">0</span>
@@ -601,16 +605,31 @@
         </div>
       </div>
 
+      <!-- ══════════ PENDING RETURNS ══════════ -->
+      <div class="page" id="page-pending">
+        <div class="page-header"><div class="page-header-left"><h2>Pending Returns</h2><p>Agents have tapped Return on these — confirm the phone is physically back before it goes to Available.</p></div></div>
+        <div class="card">
+          <div class="card-title">📥 Awaiting Verification</div>
+          <div class="last-updated" id="pendingUpdated"></div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Agent</th><th>Unit</th><th>Borrowed</th><th>Returned (tapped)</th><th>Calls (Agent)</th><th>Admin Calls</th><th>Success (Agent)</th><th>Admin Success</th><th>Status</th><th>Decision</th></tr></thead>
+              <tbody id="pendingBody"><tr class="empty-row"><td colspan="10">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- ══════════ UNRETURNED ══════════ -->
       <div class="page" id="page-unreturned">
-        <div class="page-header"><div class="page-header-left"><h2>Unreturned Units</h2><p>Overdue = borrowed on a previous day and not returned.</p></div></div>
+        <div class="page-header"><div class="page-header-left"><h2>Unreturned Units</h2><p>Overdue = borrowed more than 2 hours ago and not yet physically confirmed back by an admin.</p></div></div>
         <div class="card">
-          <div class="card-title">📋 Currently Borrowed Units</div>
+          <div class="card-title">📋 Units Not Yet Confirmed Back</div>
           <div class="last-updated" id="unreturnedUpdated"></div>
           <div class="table-wrap">
             <table>
-              <thead><tr><th>Agent</th><th>Team</th><th>Unit No.</th><th>Serial No.</th><th>Borrowed On</th><th>Status</th></tr></thead>
-              <tbody id="unreturnedBody"><tr class="empty-row"><td colspan="6">Loading…</td></tr></tbody>
+              <thead><tr><th>Agent</th><th>Team</th><th>Unit No.</th><th>Serial No.</th><th>Borrowed On</th><th>Return Tapped?</th><th>Status</th></tr></thead>
+              <tbody id="unreturnedBody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
             </table>
           </div>
         </div>
@@ -778,6 +797,7 @@ function showPage(name,el){
   el.classList.add('active');
   closeSidebar();
   if(name==='dashboard')  renderDashboard();
+  if(name==='pending')    loadPending();
   if(name==='unreturned') loadUnreturned();
   if(name==='verify')     loadVerify();
   if(name==='history')    populateHistoryUnits();
@@ -799,6 +819,7 @@ async function loadAll(){
     if(ph.success) {cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
     if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();}
     updateUnreturnedBadge(un);
+    updatePendingBadge();
     renderDashboard();
     setLiveLabel();
   }catch{}
@@ -816,6 +837,8 @@ async function refreshAll(){
     if(ph.success&&Date.now()>writeLockedUntil){cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
     if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();}
     updateUnreturnedBadge(un);
+    updatePendingBadge();
+    if(document.getElementById('page-pending').classList.contains('active')) loadPending();
     renderDashboard();
     if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
     setLiveLabel();
@@ -1331,6 +1354,12 @@ function filterPhones(){
   state.phones.filtered=q?state.phones.data.filter(p=>p.unitNo.toLowerCase().includes(q)||p.serialNo.toLowerCase().includes(q)):[...state.phones.data];
   state.phones.page=1;renderPhoneTable();
 }
+function phoneStatusTag(p){
+  if(p.available) return {cls:'tag-verified',label:'✅ Available'};
+  if(p.pendingReturn) return {cls:'tag-unverified',label:'📥 Pending Return'};
+  if(p.unavailableReason) return {cls:'tag-flagged',label:'🚫 Unavailable — '+p.unavailableReason};
+  return {cls:'tag-flagged',label:'🔴 Borrowed'};
+}
 function renderPhoneTable(){
   const {filtered,page}=state.phones;
   const tbody=document.getElementById('phoneTableBody');
@@ -1338,18 +1367,80 @@ function renderPhoneTable(){
   const start=(page-1)*PAGE_SIZE,slice=filtered.slice(start,start+PAGE_SIZE);
   document.getElementById('phoneCount').textContent=total?`${total} unit${total!==1?'s':''}`:'' ;
   if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No units found.</td></tr>';document.getElementById('phonePagination').innerHTML='';return;}
-  tbody.innerHTML=slice.map(p=>`<tr>
-    <td>Unit ${p.unitNo}</td><td>${p.serialNo}</td>
-    <td><span class="tag ${p.available?'tag-verified':'tag-flagged'}">${p.available?'✅ Available':'🔴 Borrowed'}</span></td>
-    <td>${p.available?`<button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>`:`<span style="color:var(--muted);font-size:.74rem">Return first</span>`}</td>
-  </tr>`).join('');
+  tbody.innerHTML=slice.map(p=>{
+    const tag=phoneStatusTag(p);
+    const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
+    let action;
+    if(p.available){
+      action=`<button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>
+        <button class="btn btn-logout btn-sm" onclick="showAdminHold('${p.unitNo}','${uid}')" style="margin-top:5px">Hold ▾</button>`;
+    }else if(p.pendingReturn){
+      action=`<span style="color:var(--muted);font-size:.74rem">See Pending Returns</span>`;
+    }else if(p.unavailableReason){
+      action=`<button class="btn btn-verify btn-sm" onclick="releasePhone('${p.unitNo}')">Mark Available</button>`;
+    }else{
+      action=`<span style="color:var(--muted);font-size:.74rem">Currently borrowed</span>`;
+    }
+    return `<tr id="phrow-${uid}">
+      <td>Unit ${p.unitNo}</td><td>${p.serialNo}</td>
+      <td><span class="tag ${tag.cls}" id="phtag-${uid}">${tag.label}</span></td>
+      <td id="phaction-${uid}">${action}</td>
+    </tr>`;
+  }).join('');
   renderPagination('phonePagination',page,pages,p=>{state.phones.page=p;renderPhoneTable();});
+}
+function showAdminHold(unitNo,uid){
+  const cell=document.getElementById('phaction-'+uid);if(!cell)return;
+  cell.dataset.prev=cell.innerHTML;
+  const safeUnit=unitNo.toString().replace(/'/g,"\\'");
+  cell.innerHTML=`
+    <select id="phreason-${uid}" onchange="toggleAdminOtherReason('${uid}')" style="margin-bottom:5px">
+      ${HOLD_REASONS.map(r=>`<option value="${r}">${r}</option>`).join('')}
+    </select>
+    <input type="text" id="phreasonOther-${uid}" placeholder="Describe reason…" style="display:none;margin-bottom:5px"/>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-danger btn-sm" onclick="confirmAdminHold('${safeUnit}','${uid}')" type="button">Confirm</button>
+      <button class="btn btn-logout btn-sm" onclick="cancelAdminHold('${uid}')" type="button">Cancel</button>
+    </div>`;
+}
+function toggleAdminOtherReason(uid){
+  const sel=document.getElementById('phreason-'+uid),other=document.getElementById('phreasonOther-'+uid);
+  other.style.display=sel.value==='Others'?'block':'none';
+}
+function cancelAdminHold(uid){
+  const cell=document.getElementById('phaction-'+uid);if(cell&&cell.dataset.prev)cell.innerHTML=cell.dataset.prev;
+}
+async function confirmAdminHold(unitNo,uid){
+  const sel=document.getElementById('phreason-'+uid),other=document.getElementById('phreasonOther-'+uid);
+  let reason=sel.value;
+  if(reason==='Others'){
+    if(!other.value.trim())return toast('Please describe the reason.','error');
+    reason=other.value.trim();
+  }
+  const cell=document.getElementById('phaction-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  lockWrites(8000);
+  try{
+    const res=await api({action:'setPhoneHold',unitNo,reason});
+    if(res.success){toast('🚫 Unit '+unitNo+' held: '+reason,'success');await refreshAll();filterPhones();}
+    else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
+  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+  lockWrites(0);
+}
+async function releasePhone(unitNo){
+  if(!confirm(`Mark Unit ${unitNo} as Available again?`))return;
+  lockWrites(8000);
+  try{
+    const res=await api({action:'setPhoneAvailable',unitNo});
+    if(res.success){toast('✅ Unit '+unitNo+' is available again.','success');await refreshAll();filterPhones();}
+    else toast('❌ '+res.message,'error');
+  }catch{toast('❌ Connection error.','error');}
+  lockWrites(0);
 }
 async function addPhone(){
   const unitNo=document.getElementById('newUnitNo').value.trim();const serialNo=document.getElementById('newSerialNo').value.trim();
   if(!unitNo||!serialNo)return toast('Please enter both unit number and serial number.','error');
   if(state.phones.data.find(p=>p.unitNo===unitNo))return toast('Unit number already exists.','error');
-  state.phones.data.push({unitNo,serialNo,available:true});cachePhones=[...state.phones.data];filterPhones();
+  state.phones.data.push({unitNo,serialNo,available:true,pendingReturn:false,unavailableReason:null});cachePhones=[...state.phones.data];filterPhones();
   document.getElementById('newUnitNo').value='';document.getElementById('newSerialNo').value='';
   toast('Phone unit added!','success');lockWrites(20000);
   const res=await api({action:'addPhone',unitNo,serialNo});lockWrites(0);
@@ -1376,6 +1467,104 @@ function renderPagination(id,cur,total,cb){
   h+=`<span class="pg-info">Page ${cur} of ${total}</span>`;el.innerHTML=h;
 }
 
+// ── PENDING RETURNS ─────────────────────────────────────
+const HOLD_REASONS=["Not charged","SIM restricted","Under verification (previous borrower)","Others"];
+function updatePendingBadge(){
+  const c=cachePhones.filter(p=>p.pendingReturn).length;
+  const b=document.getElementById('pendingBadge');
+  b.style.display=c>0?'inline-block':'none';b.textContent=c;
+}
+async function loadPending(){
+  const tbody=document.getElementById('pendingBody');
+  try{
+    const [phRes,recRes]=await Promise.all([api({action:'getPhones'}),api({action:'getRecords'})]);
+    document.getElementById('pendingUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+    if(!phRes.success){tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';return;}
+    cachePhones=phRes.phones;updatePendingBadge();
+    const recordsById={};
+    if(recRes.success)recRes.records.forEach(r=>{recordsById[r['Record ID']]=r;});
+    const pending=cachePhones.filter(p=>p.pendingReturn&&p.pendingRecordId);
+    if(!pending.length){tbody.innerHTML='<tr class="empty-row"><td colspan="10">✅ Nothing awaiting verification.</td></tr>';return;}
+    tbody.innerHTML=pending.map(p=>{
+      const r=recordsById[p.pendingRecordId]||{};
+      const agentCalls=r['Clients Called (Agent)']!==undefined&&r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—';
+      const agentSucc=r['Successful Calls (Agent)']!==undefined&&r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—';
+      const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
+      return `<tr id="prow-${uid}">
+        <td>${p.borrowedBy||'—'}</td><td>Unit ${p.unitNo}</td>
+        <td>${fmt(p.borrowTime)}</td><td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
+        <td style="font-weight:700;color:var(--primary)">${agentCalls}</td>
+        <td><input type="number" class="verify-input" id="pc-${uid}" min="0" placeholder="0"/></td>
+        <td style="font-weight:700;color:var(--primary)">${agentSucc}</td>
+        <td><input type="number" class="verify-input" id="ps-${uid}" min="0" placeholder="0"/></td>
+        <td><span class="tag tag-unverified" id="ptag-${uid}">Unverified</span></td>
+        <td id="pdecision-${uid}">
+          <button class="btn btn-verify" onclick="approvePending('${p.unitNo}','${uid}')" type="button">✅ Available</button>
+          <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button" style="margin-top:5px">🚫 Hold</button>
+        </td>
+      </tr>`;
+    }).join('');
+  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';}
+}
+function readPendingCounts(uid){
+  const ci=document.getElementById('pc-'+uid),si=document.getElementById('ps-'+uid);
+  if(!ci||!si||ci.value===''||si.value==='')return null;
+  const c=parseInt(ci.value),s=parseInt(si.value);
+  if(s>c)return null;
+  return {adminCalls:c,adminSuccessful:s};
+}
+function showHoldReason(unitNo,uid){
+  const cell=document.getElementById('pdecision-'+uid);if(!cell)return;
+  cell.dataset.prev=cell.innerHTML;
+  const safeUnit=unitNo.toString().replace(/'/g,"\\'");
+  cell.innerHTML=`
+    <select id="preason-${uid}" onchange="toggleOtherReason('${uid}')" style="margin-bottom:5px">
+      ${HOLD_REASONS.map(r=>`<option value="${r}">${r}</option>`).join('')}
+    </select>
+    <input type="text" id="preasonOther-${uid}" placeholder="Describe reason…" style="display:none;margin-bottom:5px"/>
+    <div style="display:flex;gap:6px">
+      <button class="btn btn-danger btn-sm" onclick="confirmHold('${safeUnit}','${uid}')" type="button">Confirm</button>
+      <button class="btn btn-logout btn-sm" onclick="cancelHoldReason('${uid}')" type="button">Cancel</button>
+    </div>`;
+}
+function toggleOtherReason(uid){
+  const sel=document.getElementById('preason-'+uid),other=document.getElementById('preasonOther-'+uid);
+  other.style.display=sel.value==='Others'?'block':'none';
+}
+function cancelHoldReason(uid){
+  const cell=document.getElementById('pdecision-'+uid);if(cell&&cell.dataset.prev)cell.innerHTML=cell.dataset.prev;
+}
+async function approvePending(unitNo,uid){
+  const counts=readPendingCounts(uid);
+  if(!counts)return toast('Enter valid admin call counts (successful ≤ total).','error');
+  const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  try{
+    const res=await api({action:'resolveReturn',unitNo,decision:'available',adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
+    if(res.success){
+      toast('✅ Unit '+unitNo+' verified and available.','success');
+      lockWrites(8000);loadPending();refreshAll();
+    }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
+  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+}
+async function confirmHold(unitNo,uid){
+  const counts=readPendingCounts(uid);
+  if(!counts)return toast('Enter valid admin call counts (successful ≤ total).','error');
+  const sel=document.getElementById('preason-'+uid);const other=document.getElementById('preasonOther-'+uid);
+  let reason=sel.value;
+  if(reason==='Others'){
+    if(!other.value.trim())return toast('Please describe the reason.','error');
+    reason=other.value.trim();
+  }
+  const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  try{
+    const res=await api({action:'resolveReturn',unitNo,decision:'unavailable',reason,adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
+    if(res.success){
+      toast('🚫 Unit '+unitNo+' held: '+reason,'success');
+      lockWrites(8000);loadPending();refreshAll();
+    }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
+  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+}
+
 // ── UNRETURNED ────────────────────────────────────────
 function updateUnreturnedBadge(data){
   const badge=document.getElementById('unreturnedBadge');
@@ -1390,13 +1579,14 @@ async function loadUnreturned(){
     const data=await api({action:'getUnreturned'});
     document.getElementById('unreturnedUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
     updateUnreturnedBadge(data);
-    if(!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="6">✅ All units have been returned.</td></tr>';return;}
+    if(!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="7">✅ All units have been confirmed back.</td></tr>';return;}
     tbody.innerHTML=data.unreturned.map(r=>`<tr>
       <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
       <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
-      <td>${r.status==='Overdue'?'<span class="tag tag-overdue">⚠️ Overdue</span>':'<span class="tag tag-today">🟢 Active Today</span>'}</td>
+      <td>${r.pendingReturn?'<span class="tag tag-unverified">📥 Yes — pending</span>':'<span style="color:var(--muted);font-size:.78rem">No</span>'}</td>
+      <td>${r.status==='Overdue'?'<span class="tag tag-overdue">⚠️ Overdue</span>':'<span class="tag tag-today">🟡 Active</span>'}</td>
     </tr>`).join('');
-  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="6">Failed to load.</td></tr>';}
+  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="7">Failed to load.</td></tr>';}
 }
 
 // ── HISTORY ───────────────────────────────────────────
