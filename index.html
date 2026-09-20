@@ -962,6 +962,11 @@
       function phoneState(p) {
         if (p.available) return { state: "available", mine: false };
         if (!p.borrowTime) return { state: "held", mine: false }; // admin pulled it from rotation
+        // Admin has confirmed the unit is physically back in hand but
+        // hasn't finished call verification / hit Release yet — it's
+        // no longer out with an agent, so show it as unavailable
+        // rather than deployed/overdue.
+        if (p.physicallyReturned) return { state: "held", mine: false };
         const mine = !!(currentAgent && p.borrowedBy === currentAgent.name);
         const hrs = (Date.now() - new Date(p.borrowTime).getTime()) / 3600000;
         const overdue = hrs >= OVERDUE_HOURS;
