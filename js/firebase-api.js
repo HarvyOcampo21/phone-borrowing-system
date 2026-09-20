@@ -477,6 +477,7 @@ async function getUnreturnedUnits() {
   snap.forEach((d) => {
     const v = d.data();
     if (v.available !== false || !v.borrowTime) return; // no active loan clock
+    if (v.physicallyReturned) return; // admin already confirmed it's back in hand — it now lives in Pending Returns, not here
     const borrowTime = v.borrowTime.toDate();
     const hrs = (Date.now() - borrowTime.getTime()) / 3600000;
     unreturned.push({
