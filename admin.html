@@ -870,11 +870,26 @@ function filterRecordsByPeriodAndTeam(agentNameFilter){
   });
 }
 
+// Once admin has verified/flagged a record, the ADMIN's counted calls are
+// the source of truth (not the agent's self-reported numbers) — records
+// still sitting at "Unverified" have no admin count yet, so those fall
+// back to the agent's figures until an admin resolves the return.
+function effCalls(r){
+  const status=r['Verification Status']||'Unverified';
+  if(status!=='Unverified'&&r['Clients Called (Admin)']!=='')return parseInt(r['Clients Called (Admin)'])||0;
+  return parseInt(r['Clients Called (Agent)'])||0;
+}
+function effSuccessful(r){
+  const status=r['Verification Status']||'Unverified';
+  if(status!=='Unverified'&&r['Successful Calls (Admin)']!=='')return parseInt(r['Successful Calls (Admin)'])||0;
+  return parseInt(r['Successful Calls (Agent)'])||0;
+}
+
 function computeStats(filtered){
   const returned=filtered.filter(r=>r['Return Time']);
   const totalBorrows   =filtered.length;
-  const totalCalls     =returned.reduce((s,r)=>s+(parseInt(r['Clients Called (Agent)'])||0),0);
-  const totalSuccessful=returned.reduce((s,r)=>s+(parseInt(r['Successful Calls (Agent)'])||0),0);
+  const totalCalls     =returned.reduce((s,r)=>s+effCalls(r),0);
+  const totalSuccessful=returned.reduce((s,r)=>s+effSuccessful(r),0);
   const successRate    =totalCalls>0?Math.round(totalSuccessful/totalCalls*100):0;
   const flaggedCount   =returned.filter(r=>r['Verification Status']==='Flagged').length;
   const verifiedCount  =returned.filter(r=>r['Verification Status']==='Verified').length;
@@ -922,7 +937,7 @@ function renderDashboard(){
     const name=(r['Agent Name']||'Unknown').toString().trim();
     if(!agStats[name])agStats[name]={name,team:agTeam[name]||'—',borrows:0,calls:0,successful:0,flagged:0};
     agStats[name].borrows++;
-    if(r['Return Time']){agStats[name].calls+=parseInt(r['Clients Called (Agent)'])||0;agStats[name].successful+=parseInt(r['Successful Calls (Agent)'])||0;if(r['Verification Status']==='Flagged')agStats[name].flagged++;}
+    if(r['Return Time']){agStats[name].calls+=effCalls(r);agStats[name].successful+=effSuccessful(r);if(r['Verification Status']==='Flagged')agStats[name].flagged++;}
   });
   const agentPerf=Object.values(agStats).sort((a,b)=>b.calls-a.calls);
   const trend=buildTrendData(filtered);
@@ -951,6 +966,7 @@ function selectAgentDash(name){
   document.getElementById('agentDashSuggestions').style.display='none';
   document.getElementById('clearAgentBtn').style.display='inline-flex';
   document.getElementById('agentDashCard').classList.add('show');
+  document.getElementById('overviewSection').style.display='none';
   renderAgentDashboard(name);
 }
 
@@ -959,6 +975,7 @@ function clearAgentDash(){
   document.getElementById('agentDashSearch').value='';
   document.getElementById('clearAgentBtn').style.display='none';
   document.getElementById('agentDashCard').classList.remove('show');
+  document.getElementById('overviewSection').style.display='';
 }
 
 // Called from Manage Agents "View Performance" button
@@ -1008,8 +1025,8 @@ function renderAgentDashboard(name){
       <td>Unit ${r['Phone Unit']||'—'}</td>
       <td>${fmt(r['Borrow Time'])}</td>
       <td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
-      <td>${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
-      <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
+      <td>${r['Return Time']?effCalls(r):'—'}</td>
+      <td>${r['Return Time']?effSuccessful(r):'—'}</td>
       <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
     </tr>`;
   }).join('');
