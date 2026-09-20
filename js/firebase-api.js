@@ -306,17 +306,23 @@ async function confirmPhysicalReturn(data) {
         throw new Error("This unit has no pending return to confirm.");
       if (p.physicallyReturned) throw new Error("Already confirmed physically back.");
 
+      // All reads (including the agent lookup) must happen before any
+      // writes in a Firestore transaction — get the agent doc now,
+      // decide whether to unlock it, then do both writes together.
+      let agentRef = null;
+      let agentSnap = null;
+      if (p.borrowedBy) {
+        agentRef = doc(db, "agents", slug(p.borrowedBy));
+        agentSnap = await tx.get(agentRef);
+      }
+
       tx.update(phoneRef, { physicallyReturned: true });
 
       // Only unlock the agent if they haven't already moved on to a
       // newer active loan (which can happen since this unlocks them
       // before the final Release/Hold decision).
-      if (p.borrowedBy) {
-        const agentRef = doc(db, "agents", slug(p.borrowedBy));
-        const agentSnap = await tx.get(agentRef);
-        if (agentSnap.exists() && agentSnap.data().activeRecordId === p.pendingRecordId) {
-          tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
-        }
+      if (agentRef && agentSnap && agentSnap.exists() && agentSnap.data().activeRecordId === p.pendingRecordId) {
+        tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
       }
     });
     return {
