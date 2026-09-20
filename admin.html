@@ -1405,20 +1405,20 @@ async function confirmAdminHold(unitNo,uid){
   lockWrites(8000);
   try{
     const res=await api({action:'setPhoneHold',unitNo,reason});
+    lockWrites(0); // unlock before refreshing so this write's result isn't skipped
     if(res.success){toast('🚫 Unit '+unitNo+' held: '+reason,'success');await refreshAll();filterPhones();}
     else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
-  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
-  lockWrites(0);
+  }catch{lockWrites(0);cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 async function releasePhone(unitNo){
   if(!confirm(`Mark Unit ${unitNo} as Available again?`))return;
   lockWrites(8000);
   try{
     const res=await api({action:'setPhoneAvailable',unitNo});
+    lockWrites(0); // unlock before refreshing so this write's result isn't skipped
     if(res.success){toast('✅ Unit '+unitNo+' is available again.','success');await refreshAll();filterPhones();}
     else toast('❌ '+res.message,'error');
-  }catch{toast('❌ Connection error.','error');}
-  lockWrites(0);
+  }catch{lockWrites(0);toast('❌ Connection error.','error');}
 }
 async function addPhone(){
   const unitNo=document.getElementById('newUnitNo').value.trim();const serialNo=document.getElementById('newSerialNo').value.trim();
@@ -1525,7 +1525,7 @@ async function confirmPhysical(unitNo,uid){
     const res=await api({action:'confirmPhysicalReturn',unitNo});
     if(res.success){
       toast('📦 Unit '+unitNo+' confirmed physically back. Still unavailable until released.','success');
-      lockWrites(8000);loadPending();refreshAll();
+      loadPending();refreshAll();
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
   }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
@@ -1537,7 +1537,7 @@ async function approvePending(unitNo,uid){
     const res=await api({action:'resolveReturn',unitNo,decision:'available',adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
     if(res.success){
       toast('🔓 Unit '+unitNo+' verified and released.','success');
-      lockWrites(8000);loadPending();refreshAll();
+      loadPending();refreshAll();
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
   }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
@@ -1555,7 +1555,7 @@ async function confirmHold(unitNo,uid){
     const res=await api({action:'resolveReturn',unitNo,decision:'unavailable',reason,adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
     if(res.success){
       toast('🚫 Unit '+unitNo+' held: '+reason,'success');
-      lockWrites(8000);loadPending();refreshAll();
+      loadPending();refreshAll();
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
   }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
