@@ -331,7 +331,6 @@
           <span class="badge-alert" id="unreturnedBadge">0</span>
         </div>
         <div class="nav-item" onclick="showPage('history',this)"><span class="nav-icon">📂</span>Unit History</div>
-        <div class="nav-item" onclick="showPage('verify',this)"><span class="nav-icon">✅</span>Verify Calls</div>
       </div>
       <div class="sidebar-footer">
         <button class="theme-toggle" id="sidebarThemeToggle" onclick="toggleTheme()" type="button"><span class="ico" id="themeToggleIcon">🌙</span><span id="themeToggleLabel">Dark mode</span></button>
@@ -607,7 +606,7 @@
 
       <!-- ══════════ PENDING RETURNS ══════════ -->
       <div class="page" id="page-pending">
-        <div class="page-header"><div class="page-header-left"><h2>Pending Returns</h2><p>Agents have tapped Return on these — confirm the phone is physically back before it goes to Available.</p></div></div>
+        <div class="page-header"><div class="page-header-left"><h2>Pending Returns</h2><p>Agents have tapped Return on these — confirm the phone is physically back before releasing it. The agent stays locked out of borrowing until you do.</p></div></div>
         <div class="card">
           <div class="card-title">📥 Awaiting Verification</div>
           <div class="last-updated" id="pendingUpdated"></div>
@@ -666,21 +665,6 @@
         </div>
       </div>
 
-      <!-- ══════════ VERIFY ══════════ -->
-      <div class="page" id="page-verify">
-        <div class="page-header"><div class="page-header-left"><h2>Verify Client Calls</h2><p>Enter admin-verified counts. Both must match for Verified status.</p></div></div>
-        <div class="card">
-          <div class="card-title">📞 Returned Records</div>
-          <div class="last-updated" id="verifyUpdated"></div>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Agent</th><th>Unit</th><th>Returned</th><th>Calls (Agent)</th><th>Admin Calls</th><th>Success (Agent)</th><th>Admin Success</th><th>Status</th><th>Save</th></tr></thead>
-              <tbody id="verifyBody"><tr class="empty-row"><td colspan="9">Loading…</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
     </main>
   </div>
 </div>
@@ -702,7 +686,6 @@ let currentDashPeriod = 'day';
 let selectedAgentDash = null;
 let refreshTimer      = null;
 let writeLockedUntil  = 0;
-const verifyOverrides = {};
 let parsedXmlAgents   = [];
 
 let cacheRecords=[], cacheAgents=[], cachePhones=[], cacheTeams=[];
@@ -799,7 +782,6 @@ function showPage(name,el){
   if(name==='dashboard')  renderDashboard();
   if(name==='pending')    loadPending();
   if(name==='unreturned') loadUnreturned();
-  if(name==='verify')     loadVerify();
   if(name==='history')    populateHistoryUnits();
   if(name==='teams')      renderTeamsTable();
 }
@@ -1377,7 +1359,7 @@ function renderPhoneTable(){
     }else if(p.pendingReturn){
       action=`<span style="color:var(--muted);font-size:.74rem">See Pending Returns</span>`;
     }else if(p.unavailableReason){
-      action=`<button class="btn btn-verify btn-sm" onclick="releasePhone('${p.unitNo}')">Mark Available</button>`;
+      action=`<button class="btn btn-verify btn-sm" onclick="releasePhone('${p.unitNo}')">🔓 Release</button>`;
     }else{
       action=`<span style="color:var(--muted);font-size:.74rem">Currently borrowed</span>`;
     }
@@ -1499,7 +1481,7 @@ async function loadPending(){
         <td><input type="number" class="verify-input" id="ps-${uid}" min="0" placeholder="0"/></td>
         <td><span class="tag tag-unverified" id="ptag-${uid}">Unverified</span></td>
         <td id="pdecision-${uid}">
-          <button class="btn btn-verify" onclick="approvePending('${p.unitNo}','${uid}')" type="button">✅ Available</button>
+          <button class="btn btn-verify" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
           <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button" style="margin-top:5px">🚫 Hold</button>
         </td>
       </tr>`;
@@ -1541,7 +1523,7 @@ async function approvePending(unitNo,uid){
   try{
     const res=await api({action:'resolveReturn',unitNo,decision:'available',adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
     if(res.success){
-      toast('✅ Unit '+unitNo+' verified and available.','success');
+      toast('🔓 Unit '+unitNo+' verified and released.','success');
       lockWrites(8000);loadPending();refreshAll();
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
   }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
@@ -1617,62 +1599,6 @@ async function loadHistory(){
       </tr>`;
     }).join('');
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="11">Failed to load.</td></tr>';}
-}
-
-// ── VERIFY ────────────────────────────────────────────
-async function loadVerify(){
-  const tbody=document.getElementById('verifyBody');
-  try{
-    const data=await api({action:'getRecords'});
-    document.getElementById('verifyUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
-    if(!data.success){tbody.innerHTML='<tr class="empty-row"><td colspan="9">Failed to load.</td></tr>';return;}
-    const returned=data.records.filter(r=>r['Return Time']);
-    if(!returned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="9">No returned records yet.</td></tr>';return;}
-    tbody.innerHTML=[...returned].reverse().map(r=>{
-      const rid=r['Record ID'];
-      const ov=verifyOverrides[rid];
-      const status=ov?ov.status:(r['Verification Status']||'Unverified');
-      const aCval=ov?ov.adminCalls:(r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'');
-      const aSval=ov?ov.adminSucc:(r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'');
-      const saved=ov&&ov.saved;
-      return `<tr id="vrow-${rid}">
-        <td>${r['Agent Name']||'—'}</td><td>Unit ${r['Phone Unit']||'—'}</td><td>${fmt(r['Return Time'])}</td>
-        <td style="font-weight:700;color:var(--primary)">${r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—'}</td>
-        <td><input type="number" class="verify-input" id="vc-${rid}" min="0" placeholder="0" value="${aCval}" oninput="markUnsaved('${rid}')"/>${saved&&aCval!==''?`<div class="verify-saved-note">✓ ${aCval}</div>`:''}</td>
-        <td style="font-weight:700;color:var(--primary)">${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
-        <td><input type="number" class="verify-input" id="vs-${rid}" min="0" placeholder="0" value="${aSval}" oninput="markUnsaved('${rid}')"/>${saved&&aSval!==''?`<div class="verify-saved-note">✓ ${aSval}</div>`:''}</td>
-        <td><span class="tag ${tagCls(status)}" id="vtag-${rid}">${status}</span></td>
-        <td><button class="btn btn-verify" id="vsave-${rid}" onclick="verifyRecord('${rid}')" type="button" style="${saved?'opacity:.5;cursor:default;':''}">${saved?'✓ Saved':'Save'}</button></td>
-      </tr>`;
-    }).join('');
-  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="9">Failed to load.</td></tr>';}
-}
-function markUnsaved(rid){
-  if(verifyOverrides[rid])verifyOverrides[rid].saved=false;
-  const btn=document.getElementById('vsave-'+rid);
-  if(btn){btn.textContent='Save';btn.style.opacity='1';btn.style.cursor='pointer';}
-}
-async function verifyRecord(rid){
-  const ci=document.getElementById('vc-'+rid),si=document.getElementById('vs-'+rid);if(!ci||!si)return;
-  const adminCalls=ci.value,adminSucc=si.value;
-  if(adminCalls===''||adminSucc==='')return toast('Please enter both verified counts.','error');
-  if(parseInt(adminSucc)>parseInt(adminCalls))return toast('Successful cannot exceed total calls.','error');
-  const saveBtn=document.getElementById('vsave-'+rid);if(saveBtn){saveBtn.disabled=true;saveBtn.textContent='Saving…';}
-  const row=document.getElementById('vrow-'+rid);
-  const agentCalls=parseInt(row?.cells[3]?.textContent)||0;const agentSucc=parseInt(row?.cells[5]?.textContent)||0;
-  const newStatus=(agentCalls===parseInt(adminCalls)&&agentSucc===parseInt(adminSucc))?'Verified':'Flagged';
-  try{
-    const res=await api({action:'verifyRecord',recordId:rid,adminCalls:parseInt(adminCalls),adminSuccessful:parseInt(adminSucc)});
-    if(res.success){
-      const tag=document.getElementById('vtag-'+rid);if(tag){tag.textContent=newStatus;tag.className='tag '+tagCls(newStatus);}
-      verifyOverrides[rid]={adminCalls:parseInt(adminCalls),adminSucc:parseInt(adminSucc),status:newStatus,saved:true};
-      if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='✓ Saved';saveBtn.style.opacity='.5';saveBtn.style.cursor='default';}
-      const vcNote=ci.parentElement.querySelector('.verify-saved-note');const vsNote=si.parentElement.querySelector('.verify-saved-note');
-      if(vcNote)vcNote.textContent=`✓ ${adminCalls}`;else ci.insertAdjacentHTML('afterend',`<div class="verify-saved-note">✓ ${adminCalls}</div>`);
-      if(vsNote)vsNote.textContent=`✓ ${adminSucc}`;else si.insertAdjacentHTML('afterend',`<div class="verify-saved-note">✓ ${adminSucc}</div>`);
-      toast(newStatus==='Verified'?'✅ Verified!':'🚩 Flagged.',newStatus==='Verified'?'success':'error');
-    }else{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='Retry';saveBtn.style.opacity='1';}toast('❌ '+res.message,'error');}
-  }catch{if(saveBtn){saveBtn.disabled=false;saveBtn.textContent='Retry';}toast('❌ Connection error.','error');}
 }
 
 // ── HELPERS ───────────────────────────────────────────

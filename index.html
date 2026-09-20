@@ -276,6 +276,13 @@
       .btn-return:hover {
         background: var(--primary-dk);
       }
+      .btn-return.btn-pending {
+        background: #94a3b8;
+        cursor: not-allowed;
+      }
+      .btn-return.btn-pending:hover {
+        background: #94a3b8;
+      }
 
       /* ---------- phone grid ---------- */
       .phone-grid {
@@ -618,7 +625,7 @@
               <span id="borrowedUnitLabel"></span>
               <span class="return-badge" id="returnBadge"></span>
             </div>
-            <button class="btn-return" onclick="openReturn()">
+            <button class="btn-return" id="returnActionBtn" onclick="openReturn()">
               ↩️ Return Phone
             </button>
           </div>
@@ -970,6 +977,11 @@
       function renderGrid() {
         const grid = document.getElementById("phoneGrid");
         const locked = !!(currentAgent && currentAgent.activeBorrowUnit);
+        const myPhone = locked
+          ? allPhones.find((x) => String(x.unitNo) === String(currentAgent.activeBorrowUnit))
+          : null;
+        const awaitingVerification = !!(myPhone && myPhone.pendingReturn);
+
         document.getElementById("returnBar").classList.toggle("show", locked);
         const lockedNotice = document.getElementById("lockedNotice");
         lockedNotice.classList.remove("show");
@@ -977,7 +989,19 @@
 
         if (locked) {
           document.getElementById("borrowedUnitLabel").textContent =
-            "Unit " + currentAgent.activeBorrowUnit;
+            "Unit " + currentAgent.activeBorrowUnit + (awaitingVerification ? " · Pending Verification" : "");
+
+          const btn = document.getElementById("returnActionBtn");
+          if (awaitingVerification) {
+            btn.textContent = "⏳ Awaiting Verification";
+            btn.disabled = true;
+            btn.classList.add("btn-pending");
+          } else {
+            btn.textContent = "↩️ Return Phone";
+            btn.disabled = false;
+            btn.classList.remove("btn-pending");
+          }
+
           if (activeRecord && activeRecord["Borrow Time"]) {
             const bt = new Date(activeRecord["Borrow Time"]);
             const hrs = (Date.now() - bt.getTime()) / 3600000;
@@ -986,10 +1010,9 @@
                 Date.now() - bt.getTime() - OVERDUE_HOURS * 3600000
               );
               lockedNotice.classList.add("show");
-              document.getElementById("lockedNoticeText").textContent =
-                "This borrowing session is overdue by " +
-                overTxt +
-                ". Please return the phone as soon as possible.";
+              document.getElementById("lockedNoticeText").textContent = awaitingVerification
+                ? "This return is overdue by " + overTxt + " and still awaiting admin verification."
+                : "This borrowing session is overdue by " + overTxt + ". Please return the phone as soon as possible.";
               const badge = document.getElementById("returnBadge");
               badge.textContent = "Overdue · " + overTxt;
               badge.classList.add("show");
@@ -1052,7 +1075,11 @@
 
         if (currentAgent && currentAgent.activeBorrowUnit) {
           if (String(p.unitNo) === String(currentAgent.activeBorrowUnit)) {
-            openReturn();
+            if (p.pendingReturn) {
+              toast("Your return is awaiting admin verification.", "info");
+            } else {
+              openReturn();
+            }
           } else {
             toast("Return your current phone before borrowing another.", "error");
           }

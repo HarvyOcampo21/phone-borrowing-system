@@ -198,8 +198,16 @@ async function borrowPhone(data) {
       if (!phoneSnap.exists()) throw new Error("Phone unit not found.");
       const a = agentSnap.data();
       const p = phoneSnap.data();
-      if (a.activeBorrowUnit)
+      if (a.activeBorrowUnit) {
+        const heldRef = doc(db, "phones", slug(a.activeBorrowUnit));
+        const heldSnap = await tx.get(heldRef);
+        if (heldSnap.exists() && heldSnap.data().pendingReturn) {
+          throw new Error(
+            "Your return of Unit " + a.activeBorrowUnit + " is awaiting admin verification. You can't borrow another phone yet."
+          );
+        }
         throw new Error("You already have Unit " + a.activeBorrowUnit + " borrowed. Return it first.");
+      }
       if (p.available === false)
         throw new Error("This unit is currently borrowed.");
 
@@ -230,10 +238,10 @@ async function borrowPhone(data) {
   }
 }
 
-// Agent taps "Return Phone": this is a SOFT return. It ends the agent's
-// own active session and logs their reported call counts, but does NOT
-// free the unit — the phone stays unavailable (borrowTime is kept, so
-// Overdue can still trigger) until an admin verifies the physical
+// Agent taps "Return Phone": this is a SOFT return. It logs their
+// reported call counts, but does NOT free the unit, and does NOT clear
+// the agent's own active session either — the agent stays locked out
+// of borrowing another phone until an admin verifies the physical
 // return via resolveReturn(). This exists because an agent can tap the
 // button without actually handing the phone back.
 async function returnPhone(data) {
@@ -260,21 +268,27 @@ async function returnPhone(data) {
         clientsCalledAgent: data.clientsCalled,
         successfulCallsAgent: data.successfulCalls,
       });
-      // available/borrowedBy/borrowTime are left as-is on purpose.
+      // available/borrowedBy/borrowTime, and the agent's
+      // activeBorrowUnit/activeRecordId, are all left as-is on purpose —
+      // resolveReturn() clears them once an admin confirms.
       tx.update(phoneRef, { pendingReturn: true, pendingRecordId: a.activeRecordId });
-      tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
     });
-    return { success: true, message: "Return submitted. Awaiting verification by admin." };
+    return {
+      success: true,
+      message: "Return submitted. You're locked out of borrowing until admin verifies this return.",
+    };
   } catch (err) {
     return { success: false, message: err.message };
   }
 }
 
 // Admin confirms a physical return (or rejects it) after reviewing the
-// agent's reported call counts against their own count.
+// agent's reported call counts against their own count. Either way,
+// this is what clears the agent's lock — a Hold decision means the
+// PHONE has a problem, not that the agent did anything wrong.
 //   decision: "available"   → unit goes back into rotation
 //   decision: "unavailable" → unit is held; `reason` is required and
-//             should be one of HOLD_REASONS (or free text for "Other")
+//             should be one of HOLD_REASONS (or free text for "Others")
 async function resolveReturn(data) {
   const phoneRef = doc(db, "phones", slug(data.unitNo));
   const decision = data.decision === "available" ? "available" : "unavailable";
@@ -294,6 +308,15 @@ async function resolveReturn(data) {
       const recordSnap = await tx.get(recordRef);
       if (!recordSnap.exists()) throw new Error("Return record not found.");
       const r = recordSnap.data();
+
+      // The agent may still be resolvable via the phone's borrowedBy
+      // field (it isn't cleared until this function runs).
+      let agentRef = null;
+      let agentSnap = null;
+      if (p.borrowedBy) {
+        agentRef = doc(db, "agents", slug(p.borrowedBy));
+        agentSnap = await tx.get(agentRef);
+      }
 
       const agentCalls = parseInt(r.clientsCalledAgent) || 0;
       const agentSucc = parseInt(r.successfulCallsAgent) || 0;
@@ -315,11 +338,15 @@ async function resolveReturn(data) {
         pendingRecordId: null,
         unavailableReason: decision === "available" ? null : data.reason.toString().trim(),
       });
+
+      if (agentRef && agentSnap && agentSnap.exists()) {
+        tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
+      }
     });
     return {
       success: true,
       status: verificationStatus,
-      message: decision === "available" ? "Return verified — unit is available." : "Return verified — unit held unavailable.",
+      message: decision === "available" ? "Return verified — unit released and available." : "Return verified — unit held unavailable.",
     };
   } catch (err) {
     return { success: false, message: err.message };
