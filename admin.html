@@ -606,7 +606,7 @@
 
       <!-- ══════════ PENDING RETURNS ══════════ -->
       <div class="page" id="page-pending">
-        <div class="page-header"><div class="page-header-left"><h2>Pending Returns</h2><p>Agents have tapped Return on these — confirm the phone is physically back before releasing it. The agent stays locked out of borrowing until you do.</p></div></div>
+        <div class="page-header"><div class="page-header-left"><h2>Pending Returns</h2><p>Agents have tapped Return on these. Use <b>Confirm Physical Return</b> to acknowledge the phone is back in hand and free the agent to borrow another unit — the phone itself stays unavailable until you verify the calls and hit Release. Skip straight to Release/Hold if you're doing both at once.</p></div></div>
         <div class="card">
           <div class="card-title">📥 Awaiting Verification</div>
           <div class="last-updated" id="pendingUpdated"></div>
@@ -1338,7 +1338,9 @@ function filterPhones(){
 }
 function phoneStatusTag(p){
   if(p.available) return {cls:'tag-verified',label:'✅ Available'};
-  if(p.pendingReturn) return {cls:'tag-unverified',label:'📥 Pending Return'};
+  if(p.pendingReturn) return p.physicallyReturned
+    ? {cls:'tag-today',label:'📦 Physically Back — Pending Verification'}
+    : {cls:'tag-unverified',label:'📥 Pending Return'};
   if(p.unavailableReason) return {cls:'tag-flagged',label:'🚫 Unavailable — '+p.unavailableReason};
   return {cls:'tag-flagged',label:'🔴 Borrowed'};
 }
@@ -1479,8 +1481,9 @@ async function loadPending(){
         <td><input type="number" class="verify-input" id="pc-${uid}" min="0" placeholder="0"/></td>
         <td style="font-weight:700;color:var(--primary)">${agentSucc}</td>
         <td><input type="number" class="verify-input" id="ps-${uid}" min="0" placeholder="0"/></td>
-        <td><span class="tag tag-unverified" id="ptag-${uid}">Unverified</span></td>
+        <td><span class="tag ${p.physicallyReturned?'tag-today':'tag-unverified'}" id="ptag-${uid}">${p.physicallyReturned?'📦 Physically Back':'Unverified'}</span></td>
         <td id="pdecision-${uid}">
+          ${p.physicallyReturned?'':`<button class="btn btn-logout btn-sm" onclick="confirmPhysical('${p.unitNo}','${uid}')" type="button" style="margin-bottom:5px">📦 Confirm Physical Return</button><br/>`}
           <button class="btn btn-verify" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
           <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button" style="margin-top:5px">🚫 Hold</button>
         </td>
@@ -1515,6 +1518,16 @@ function toggleOtherReason(uid){
 }
 function cancelHoldReason(uid){
   const cell=document.getElementById('pdecision-'+uid);if(cell&&cell.dataset.prev)cell.innerHTML=cell.dataset.prev;
+}
+async function confirmPhysical(unitNo,uid){
+  const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  try{
+    const res=await api({action:'confirmPhysicalReturn',unitNo});
+    if(res.success){
+      toast('📦 Unit '+unitNo+' confirmed physically back. Still unavailable until released.','success');
+      lockWrites(8000);loadPending();refreshAll();
+    }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
+  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 async function approvePending(unitNo,uid){
   const counts=readPendingCounts(uid);

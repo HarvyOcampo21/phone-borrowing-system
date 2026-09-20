@@ -7,7 +7,9 @@
 // Data model (Firestore collections):
 //   agents/{slug(name)}   { name, team, pin, activeBorrowUnit, activeRecordId }
 //   teams/{slug(teamName)}{ teamName, manager }
-//   phones/{slug(unitNo)} { unitNo, serialNo, available, borrowedBy }
+//   phones/{slug(unitNo)} { unitNo, serialNo, available, borrowedBy,
+//                            pendingReturn, pendingRecordId,
+//                            physicallyReturned, unavailableReason }
 //   records/{recordId}    { recordId, agentName, unitNo, serialNo,
 //                            borrowTime, returnTime, notes,
 //                            clientsCalledAgent, successfulCallsAgent,
@@ -151,6 +153,7 @@ async function getPhones() {
       borrowTime: toIso(v.borrowTime),
       pendingReturn: !!v.pendingReturn,
       pendingRecordId: v.pendingRecordId || null,
+      physicallyReturned: !!v.physicallyReturned,
       unavailableReason: v.unavailableReason || null,
     });
   });
@@ -170,6 +173,7 @@ async function addPhone(data) {
     borrowTime: null,
     pendingReturn: false,
     pendingRecordId: null,
+    physicallyReturned: false,
     unavailableReason: null,
   });
   return { success: true, message: "Phone unit added." };
@@ -229,6 +233,7 @@ async function borrowPhone(data) {
         available: false,
         borrowedBy: data.agentName,
         borrowTime: Timestamp.now(),
+        physicallyReturned: false,
       });
       tx.update(agentRef, { activeBorrowUnit: data.unitNo, activeRecordId: recordId });
     });
@@ -276,6 +281,47 @@ async function returnPhone(data) {
     return {
       success: true,
       message: "Return submitted. You're locked out of borrowing until admin verifies this return.",
+    };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
+
+// Admin confirms the PHONE ITSELF is physically back in hand — the
+// unit is still out of rotation (not `available`) and still shows up
+// in Pending Returns, awaiting the admin's call-count verification and
+// final Release/Hold decision via resolveReturn(). What this DOES do
+// is clear the agent's lock immediately, so they aren't stuck waiting
+// on call verification before they can borrow a different unit. It's
+// a distinct, optional step — admins can still jump straight to
+// Release/Hold on resolveReturn() without ever calling this.
+async function confirmPhysicalReturn(data) {
+  const phoneRef = doc(db, "phones", slug(data.unitNo));
+  try {
+    await runTransaction(db, async (tx) => {
+      const phoneSnap = await tx.get(phoneRef);
+      if (!phoneSnap.exists()) throw new Error("Phone unit not found.");
+      const p = phoneSnap.data();
+      if (!p.pendingReturn || !p.pendingRecordId)
+        throw new Error("This unit has no pending return to confirm.");
+      if (p.physicallyReturned) throw new Error("Already confirmed physically back.");
+
+      tx.update(phoneRef, { physicallyReturned: true });
+
+      // Only unlock the agent if they haven't already moved on to a
+      // newer active loan (which can happen since this unlocks them
+      // before the final Release/Hold decision).
+      if (p.borrowedBy) {
+        const agentRef = doc(db, "agents", slug(p.borrowedBy));
+        const agentSnap = await tx.get(agentRef);
+        if (agentSnap.exists() && agentSnap.data().activeRecordId === p.pendingRecordId) {
+          tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
+        }
+      }
+    });
+    return {
+      success: true,
+      message: "Physical return confirmed — unit stays unavailable until verified and released.",
     };
   } catch (err) {
     return { success: false, message: err.message };
@@ -336,10 +382,14 @@ async function resolveReturn(data) {
         borrowTime: null,
         pendingReturn: false,
         pendingRecordId: null,
+        physicallyReturned: false,
         unavailableReason: decision === "available" ? null : data.reason.toString().trim(),
       });
 
-      if (agentRef && agentSnap && agentSnap.exists()) {
+      // Only clear the agent's active-loan lock if it still points at
+      // THIS return — confirmPhysicalReturn() may already have
+      // unlocked them onto a newer loan, which we must not stomp on.
+      if (agentRef && agentSnap && agentSnap.exists() && agentSnap.data().activeRecordId === p.pendingRecordId) {
         tx.update(agentRef, { activeBorrowUnit: null, activeRecordId: null });
       }
     });
@@ -575,6 +625,7 @@ export async function api(payload) {
       case "removePhone":   return await removePhone(payload);
       case "borrowPhone":   return await borrowPhone(payload);
       case "returnPhone":   return await returnPhone(payload);
+      case "confirmPhysicalReturn": return await confirmPhysicalReturn(payload);
       case "resolveReturn": return await resolveReturn(payload);
       case "setPhoneHold":      return await setPhoneHold(payload);
       case "setPhoneAvailable": return await setPhoneAvailable(payload);
