@@ -119,6 +119,7 @@
     .main-content{margin-left:230px;flex:1;padding:28px 24px;max-width:calc(100vw - 230px)}
     .page{display:none}.page.active{display:block;animation:fadeUp .28s ease both}
     .page-header{margin-bottom:20px;display:flex;align-items:flex-start;justify-content:space-between;flex-wrap:wrap;gap:10px}
+    @media(min-width:769px){.page-header{padding-right:56px}} /* clear space for the fixed notification bell */
     .page-header-left h2{font-family:'DM Serif Display',serif;font-size:1.65rem;color:var(--primary)}
     .page-header-left p{color:var(--muted);font-size:.84rem;margin-top:3px}
 
@@ -225,7 +226,6 @@
     /* ── DASHBOARD STATS ── */
     .stat-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:14px;margin-bottom:20px}
     .stat-card{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);padding:16px;box-shadow:var(--shadow);display:flex;flex-direction:column;gap:5px}
-    .stat-icon{font-size:1.3rem}
     .stat-label{font-size:.66rem;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--muted)}
     .stat-value{font-family:'DM Serif Display',serif;font-size:1.9rem;color:var(--primary);line-height:1}
     .stat-sub{font-size:.7rem;color:var(--muted)}
@@ -257,8 +257,7 @@
     .agent-dash-meta{font-size:.8rem;color:var(--muted)}
     .agent-search-bar{display:flex;gap:8px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
     .agent-search-wrap{position:relative;flex:1;min-width:200px;max-width:360px}
-    .agent-search-wrap input{padding-left:32px;font-size:.9rem}
-    .agent-search-icon{position:absolute;left:11px;top:50%;transform:translateY(-50%);font-size:.9rem;pointer-events:none;color:var(--muted)}
+    .agent-search-wrap input{font-size:.9rem}
 
     /* ── MISC ── */
     .skeleton{background:linear-gradient(90deg,var(--neutral) 25%,rgba(var(--primary-rgb),.12) 50%,var(--neutral) 75%);background-size:200% 100%;animation:shimmer 1.2s infinite;border-radius:6px;height:12px;margin:6px 0}
@@ -267,16 +266,20 @@
     .divider-line{border:none;border-top:1.5px solid var(--border);margin:16px 0}
 
     /* ── PRINT STYLES ── */
+    .print-only{display:none}
     @media print{
-      .sidebar,.topbar,.sidebar-overlay,.btn-print,.dash-filters,.no-print{display:none!important}
+      .sidebar,.topbar,.sidebar-overlay,.btn-print,.dash-filters,.no-print,.notif-bell-wrap,.notif-panel{display:none!important}
       .main-content{margin-left:0!important;max-width:100%!important;padding:10px!important}
       .page{display:block!important}
       .page:not(#page-dashboard){display:none!important}
-      #agentDashCard.show~.page-section-toggle,#overviewSection{display:block!important}
+      .page-header{padding-right:0!important}
+      .print-only{display:block!important;font-size:.8rem;color:#555;margin:-8px 0 14px}
+      *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
       body{background:#fff!important;color:#000!important}
-      .card{border:1px solid #ccc!important;box-shadow:none!important;break-inside:avoid}
+      .card,.stat-card,.chart-card{background:#fff!important;border:1px solid #ccc!important;box-shadow:none!important;break-inside:avoid}
       .stat-value{color:#333!important}
       .chart-wrap{height:180px!important}
+      .table-wrap{overflow:visible!important}
       @page{margin:1.5cm;size:A4 landscape}
     }
 
@@ -390,8 +393,9 @@
           <div class="page-header-left">
             <h2>Dashboard</h2>
             <p>Overview of phone borrowing activity.</p>
+            <p class="print-only" id="printMeta"></p>
           </div>
-          <button class="btn-print no-print" onclick="printDashboard()" type="button">🖨️ Print / Save PDF</button>
+          <button class="btn-print no-print" onclick="printDashboard()" type="button">Print / Save PDF</button>
         </div>
 
         <!-- FILTER BAR -->
@@ -401,7 +405,7 @@
             <button class="filter-tab" onclick="setDashPeriod('week',this)" type="button">This Week</button>
             <button class="filter-tab" onclick="setDashPeriod('month',this)" type="button">This Month</button>
             <button class="filter-tab" onclick="setDashPeriod('all',this)" type="button">All Time</button>
-            <button class="filter-tab" onclick="setDashPeriod('custom',this)" type="button">📅 Custom</button>
+            <button class="filter-tab" onclick="setDashPeriod('custom',this)" type="button">Custom</button>
           </div>
           <div class="date-range-wrap" id="customDateRange" style="display:none">
             <input type="date" id="dateFrom" onchange="renderDashboard()"/>
@@ -418,14 +422,13 @@
 
         <!-- INDIVIDUAL AGENT SEARCH -->
         <div class="card no-print">
-          <div class="card-title">🔍 Individual Agent Performance Search</div>
+          <div class="card-title">Individual Agent Performance Search</div>
           <div class="agent-search-bar">
             <div class="agent-search-wrap">
-              <span class="agent-search-icon">🔍</span>
               <input type="text" id="agentDashSearch" placeholder="Search agent name…" oninput="filterAgentDashSearch()" autocorrect="off"/>
             </div>
             <div id="agentDashSuggestions" style="position:absolute;margin-top:40px;background:var(--card);border:1.5px solid var(--primary);border-radius:10px;max-height:180px;overflow-y:auto;z-index:100;min-width:250px;box-shadow:0 8px 24px rgba(var(--primary-rgb),.18);display:none"></div>
-            <button class="btn btn-primary btn-sm" onclick="clearAgentDash()" type="button" id="clearAgentBtn" style="display:none">✕ Clear</button>
+            <button class="btn btn-primary btn-sm" onclick="clearAgentDash()" type="button" id="clearAgentBtn" style="display:none">Clear</button>
           </div>
         </div>
 
@@ -437,21 +440,21 @@
                 <div class="agent-dash-name" id="agentDashName">—</div>
                 <div class="agent-dash-meta" id="agentDashMeta"></div>
               </div>
-              <button class="btn-print" onclick="printDashboard()" type="button">🖨️ Print This Agent</button>
+              <button class="btn-print" onclick="printDashboard()" type="button">Print This Agent</button>
             </div>
             <div class="stat-grid" id="agentStatGrid"></div>
             <div class="chart-grid" style="margin-bottom:0">
               <div class="chart-card">
-                <div class="chart-title">📈 Borrow Activity</div>
+                <div class="chart-title">Borrow Activity</div>
                 <div class="chart-wrap"><canvas id="agentTrendChart"></canvas></div>
               </div>
               <div class="chart-card">
-                <div class="chart-title">✅ Verification Status</div>
+                <div class="chart-title">Verification Status</div>
                 <div class="chart-wrap" style="height:200px"><canvas id="agentVerifyChart"></canvas></div>
               </div>
             </div>
             <hr class="divider-line" style="margin-top:18px"/>
-            <div class="card-title" style="margin-top:14px">📋 Recent Records</div>
+            <div class="card-title" style="margin-top:14px">Recent Records</div>
             <div class="table-wrap">
               <table>
                 <thead><tr><th>Unit</th><th>Borrow Time</th><th>Return Time</th><th>Calls</th><th>Successful</th><th>Status</th></tr></thead>
@@ -464,37 +467,37 @@
         <!-- OVERVIEW STATS (shown when no individual agent selected) -->
         <div id="overviewSection">
           <div class="stat-grid" id="statGrid">
-            <div class="stat-card"><div class="stat-icon">📲</div><div class="stat-label">Total Borrows</div><div class="stat-value" id="s-borrows">—</div><div class="stat-sub">in selected period</div></div>
-            <div class="stat-card"><div class="stat-icon">📞</div><div class="stat-label">Total Calls Made</div><div class="stat-value" id="s-calls">—</div><div class="stat-sub">by returned units</div></div>
-            <div class="stat-card green"><div class="stat-icon">🎯</div><div class="stat-label">Success Rate</div><div class="stat-value" id="s-rate">—</div><div class="stat-sub">successful / total calls</div></div>
-            <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
-            <div class="stat-card yellow"><div class="stat-icon">🔴</div><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
-            <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
-            <div class="stat-card red" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-icon">🔔</div><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
+            <div class="stat-card"><div class="stat-label">Total Borrows</div><div class="stat-value" id="s-borrows">—</div><div class="stat-sub">in selected period</div></div>
+            <div class="stat-card"><div class="stat-label">Total Calls Made</div><div class="stat-value" id="s-calls">—</div><div class="stat-sub">by returned units</div></div>
+            <div class="stat-card green"><div class="stat-label">Success Rate</div><div class="stat-value" id="s-rate">—</div><div class="stat-sub">successful / total calls</div></div>
+            <div class="stat-card red"><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
+            <div class="stat-card yellow"><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
+            <div class="stat-card green"><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
+            <div class="stat-card red" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
           </div>
 
           <div class="chart-grid">
             <div class="chart-card">
-              <div class="chart-title">📞 Total Calls by Agent</div>
+              <div class="chart-title">Total Calls by Agent</div>
               <div class="chart-wrap"><canvas id="callsChart"></canvas><div class="chart-empty" id="callsEmpty" style="display:none">No call data.</div></div>
             </div>
             <div class="chart-card">
-              <div class="chart-title">🎯 Success Rate by Agent (%)</div>
+              <div class="chart-title">Success Rate by Agent (%)</div>
               <div class="chart-wrap"><canvas id="rateChart"></canvas><div class="chart-empty" id="rateEmpty" style="display:none">No data.</div></div>
             </div>
           </div>
           <div class="chart-grid">
             <div class="chart-card">
-              <div class="chart-title">✅ Verification Status</div>
+              <div class="chart-title">Verification Status</div>
               <div class="chart-wrap" style="height:210px"><canvas id="verifyChart"></canvas><div class="chart-empty" id="verifyEmpty" style="display:none">No records.</div></div>
             </div>
             <div class="chart-card">
-              <div class="chart-title">📈 Borrow Activity</div>
+              <div class="chart-title">Borrow Activity</div>
               <div class="chart-wrap"><canvas id="trendChart"></canvas><div class="chart-empty" id="trendEmpty" style="display:none">No data.</div></div>
             </div>
           </div>
           <div class="card">
-            <div class="card-title">🏆 Agent Performance</div>
+            <div class="card-title">Agent Performance</div>
             <div class="table-wrap">
               <table>
                 <thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Borrows</th><th>Total Calls</th><th>Successful</th><th>Rate</th><th>Flagged</th><th>Overdue</th></tr></thead>
@@ -1230,7 +1233,7 @@ function filterAgentDashSearch(){
   if(!q){sugg.style.display='none';return;}
   const matches=cacheAgents.filter(a=>a.name.toLowerCase().includes(q)).slice(0,8);
   if(!matches.length){sugg.style.display='none';return;}
-  sugg.innerHTML=matches.map(a=>`<div style="padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(var(--primary-rgb),.08)'" onmouseout="this.style.background=''" onclick="selectAgentDash('${a.name.replace(/'/g,"\\'")}')">👤 ${a.name}${a.team?` <span style='font-size:.72rem;color:var(--muted)'>${a.team}</span>`:''}</div>`).join('');
+  sugg.innerHTML=matches.map(a=>`<div style="padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(var(--primary-rgb),.08)'" onmouseout="this.style.background=''" onclick="selectAgentDash('${a.name.replace(/'/g,"\\'")}')">${a.name}${a.team?` <span style='font-size:.72rem;color:var(--muted)'>${a.team}</span>`:''}</div>`).join('');
   sugg.style.display='block';
 }
 
@@ -1280,7 +1283,7 @@ function callCellHtml(agentVal,adminVal,effVal,flagged){
 
 function renderAgentDashboard(name){
   const agent=cacheAgents.find(a=>a.name===name)||{name,team:''};
-  document.getElementById('agentDashName').textContent='👤 '+name;
+  document.getElementById('agentDashName').textContent=name;
   document.getElementById('agentDashMeta').textContent=(agent.team?`Team: ${agent.team}  ·  `:'')+'Showing: '+getPeriodLabel();
 
   const filtered=filterRecordsByPeriodAndTeam(name);
@@ -1290,13 +1293,13 @@ function renderAgentDashboard(name){
   // Individual stat cards
   const rate=stats.totalCalls>0?Math.round(stats.totalSuccessful/stats.totalCalls*100):0;
   document.getElementById('agentStatGrid').innerHTML=`
-    <div class="stat-card"><div class="stat-icon">📲</div><div class="stat-label">Borrows</div><div class="stat-value">${stats.totalBorrows}</div></div>
-    <div class="stat-card"><div class="stat-icon">📞</div><div class="stat-label">Total Calls</div><div class="stat-value">${stats.totalCalls}</div></div>
-    <div class="stat-card green"><div class="stat-icon">🎯</div><div class="stat-label">Success Rate</div><div class="stat-value">${rate}%</div><div class="stat-sub">${stats.totalSuccessful} successful</div></div>
-    <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged</div><div class="stat-value">${stats.flaggedCount}</div></div>
-    <div class="stat-card red"><div class="stat-icon">⏰</div><div class="stat-label">Overdue Returns</div><div class="stat-value">${stats.overdueCount}</div></div>
-    <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Verified</div><div class="stat-value">${stats.verifiedCount}</div></div>
-    <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-label">Unverified</div><div class="stat-value">${stats.unverifiedCount}</div></div>
+    <div class="stat-card"><div class="stat-label">Borrows</div><div class="stat-value">${stats.totalBorrows}</div></div>
+    <div class="stat-card"><div class="stat-label">Total Calls</div><div class="stat-value">${stats.totalCalls}</div></div>
+    <div class="stat-card green"><div class="stat-label">Success Rate</div><div class="stat-value">${rate}%</div><div class="stat-sub">${stats.totalSuccessful} successful</div></div>
+    <div class="stat-card red"><div class="stat-label">Flagged</div><div class="stat-value">${stats.flaggedCount}</div></div>
+    <div class="stat-card red"><div class="stat-label">Overdue Returns</div><div class="stat-value">${stats.overdueCount}</div></div>
+    <div class="stat-card green"><div class="stat-label">Verified</div><div class="stat-value">${stats.verifiedCount}</div></div>
+    <div class="stat-card"><div class="stat-label">Unverified</div><div class="stat-value">${stats.unverifiedCount}</div></div>
   `;
 
   // Trend chart
@@ -1316,7 +1319,7 @@ function renderAgentDashboard(name){
       <td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
       <td>${r['Return Time']?callCellHtml(r['Clients Called (Agent)'],r['Clients Called (Admin)'],effCalls(r),status==='Flagged'):'—'}</td>
       <td>${r['Return Time']?callCellHtml(r['Successful Calls (Agent)'],r['Successful Calls (Admin)'],effSuccessful(r),status==='Flagged'):'—'}</td>
-      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdueTagHtml(r)}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'Active':status}</span>${overdueTagHtml(r)}</td>
     </tr>`;
   }).join('');
 }
@@ -1424,15 +1427,34 @@ function renderPerfTable(perf){
       <td>${a.borrows}</td><td>${a.calls}</td><td>${a.successful}</td>
       <td style="font-weight:700;color:${rc}">${a.calls>0?rate+'%':'—'}</td>
       <td>${a.flagged>0?`<span class="tag tag-flagged">${a.flagged}</span>`:'0'}</td>
-      <td>${a.overdue>0?`<span class="tag tag-flagged">⏰ ${a.overdue}</span>`:'0'}</td>
+      <td>${a.overdue>0?`<span class="tag tag-flagged">${a.overdue}</span>`:'0'}</td>
     </tr>`;
   }).join('');
 }
 
 // ── PRINT ─────────────────────────────────────────────
+// Printing always uses the light palette (dark-theme text is unreadable on white
+// paper) and draws the charts without animation so the print snapshot is complete.
+let printRestoreTheme=null, printOrigAnimation;
+function allCharts(){return [chartCalls,chartRate,chartVerify,chartTrend,agentTrendChartInst,agentVerifyInst].filter(Boolean);}
 function printDashboard(){
-  window.print();
+  const teamSel=document.getElementById('dashTeamFilter');
+  const team=teamSel&&teamSel.value!=='all'?teamSel.value:'All Teams';
+  document.getElementById('printMeta').textContent=
+    (selectedAgentDash?selectedAgentDash+'  ·  ':'')+'Period: '+getPeriodLabel()+'  ·  Team: '+team+'  ·  Generated '+new Date().toLocaleString();
+  printOrigAnimation=Chart.defaults.animation;
+  Chart.defaults.animation=false;
+  if(document.documentElement.getAttribute('data-theme')==='dark'){
+    printRestoreTheme='dark';
+    applyTheme('light',true);   // re-renders every chart with light colours
+  }
+  setTimeout(()=>window.print(),250);
 }
+window.addEventListener('beforeprint',()=>allCharts().forEach(c=>{try{c.resize();}catch{}}));
+window.addEventListener('afterprint',()=>{
+  if(printOrigAnimation!==undefined){Chart.defaults.animation=printOrigAnimation;printOrigAnimation=undefined;}
+  if(printRestoreTheme){const t=printRestoreTheme;printRestoreTheme=null;applyTheme(t,true);}
+});
 
 // ── TEAM DROPDOWNS ────────────────────────────────────
 function populateTeamDropdowns(){
