@@ -1751,6 +1751,17 @@ function toggleAdminOtherReason(uid){
 function cancelAdminHold(uid){
   const cell=document.getElementById('phaction-'+uid);if(cell&&cell.dataset.prev)cell.innerHTML=cell.dataset.prev;
 }
+// Apply a confirmed change to the local phone list and redraw immediately,
+// then let refreshAll() reconcile with the server in the background.
+function applyPhoneChange(unitNo,patch){
+  const ph=state.phones.data.find(p=>p.unitNo===unitNo);
+  if(ph)Object.assign(ph,patch);
+  cachePhones=[...state.phones.data];
+  // filterPhones(false) bails out if focus is inside the table (the clicked button)
+  if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();
+  filterPhones(false);
+  refreshAll();
+}
 async function confirmAdminHold(unitNo,uid){
   const sel=document.getElementById('phreason-'+uid),other=document.getElementById('phreasonOther-'+uid);
   let reason=sel.value;
@@ -1763,8 +1774,13 @@ async function confirmAdminHold(unitNo,uid){
   try{
     const res=await api({action:'setPhoneHold',unitNo,reason});
     lockWrites(0); // unlock before refreshing so this write's result isn't skipped
-    if(res.success){toast('🚫 Unit '+unitNo+' held: '+reason,'success');await refreshAll();filterPhones();}
-    else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
+    if(res.success){
+      // Replace the "Saving…" marker AND the reason form so phoneRowProtected()
+      // no longer treats this row as busy and the redraw below can rebuild it.
+      cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">✓ Saved</span>';
+      toast('🚫 Unit '+unitNo+' held: '+reason,'success');
+      applyPhoneChange(unitNo,{available:false,unavailableReason:reason});
+    }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
   }catch{lockWrites(0);cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 async function releasePhone(unitNo){
@@ -1773,8 +1789,10 @@ async function releasePhone(unitNo){
   try{
     const res=await api({action:'setPhoneAvailable',unitNo});
     lockWrites(0); // unlock before refreshing so this write's result isn't skipped
-    if(res.success){toast('✅ Unit '+unitNo+' is available again.','success');await refreshAll();filterPhones();}
-    else toast('❌ '+res.message,'error');
+    if(res.success){
+      toast('✅ Unit '+unitNo+' is available again.','success');
+      applyPhoneChange(unitNo,{available:true,unavailableReason:null});
+    }else toast('❌ '+res.message,'error');
   }catch{lockWrites(0);toast('❌ Connection error.','error');}
 }
 async function addPhone(){
@@ -1839,6 +1857,19 @@ function pendingRowProtected(uid){
   const active=document.activeElement;
   if(active&&(active.id==='pc-'+uid||active.id==='ps-'+uid))return true;
   return false;
+}
+// A resolved (Released/Held) row is finished — drop it right away instead of
+// waiting on a network round-trip + full redraw. Also clears the "Saving…"
+// marker and the typed call counts that would otherwise make the row look
+// "in progress" to pendingRowProtected() and keep it on screen forever.
+function removePendingRow(unitNo,uid){
+  const tr=document.getElementById('prow-'+uid);if(tr)tr.remove();
+  const tbody=document.getElementById('pendingBody');
+  if(tbody&&!tbody.querySelector('tr[id^="prow-"]'))
+    tbody.innerHTML='<tr class="empty-row"><td colspan="10">✅ Nothing awaiting verification.</td></tr>';
+  const ph=cachePhones.find(p=>p.unitNo===unitNo);
+  if(ph){ph.pendingReturn=false;ph.pendingRecordId=null;ph.physicallyReturned=false;}
+  updatePendingBadge();
 }
 async function loadPending(){
   const tbody=document.getElementById('pendingBody');
@@ -1926,25 +1957,37 @@ function cancelHoldReason(uid){
 }
 async function confirmPhysical(unitNo,uid){
   const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  lockWrites(8000);
   try{
     const res=await api({action:'confirmPhysicalReturn',unitNo});
+    lockWrites(0);
     if(res.success){
+      // Update this row in place (keeps any call counts the admin already typed):
+      // restore the buttons, drop the now-redundant Confirm button, flip the tag.
+      cell.innerHTML=prevHtml;
+      const btn=cell.querySelector('button[onclick^="confirmPhysical"]');if(btn)btn.remove();
+      const tag=document.getElementById('ptag-'+uid);
+      if(tag){tag.className='tag tag-today';tag.textContent='📦 Physically Back';}
+      const ph=cachePhones.find(p=>p.unitNo===unitNo);if(ph)ph.physicallyReturned=true;
       toast('📦 Unit '+unitNo+' confirmed physically back. Still unavailable until released.','success');
-      loadPending();refreshAll();
+      refreshAll(); // reconcile with the server in the background
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
-  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+  }catch{lockWrites(0);cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 async function approvePending(unitNo,uid){
   const counts=readPendingCounts(uid);
   if(!counts)return toast('Enter valid admin call counts (successful ≤ total).','error');
   const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  lockWrites(8000);
   try{
     const res=await api({action:'resolveReturn',unitNo,decision:'available',adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
+    lockWrites(0);
     if(res.success){
+      removePendingRow(unitNo,uid);
       toast('🔓 Unit '+unitNo+' verified and released.','success');
-      loadPending();refreshAll();
+      refreshAll(); // reconcile with the server in the background
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
-  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+  }catch{lockWrites(0);cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 async function confirmHold(unitNo,uid){
   const counts=readPendingCounts(uid);
@@ -1956,13 +1999,16 @@ async function confirmHold(unitNo,uid){
     reason=other.value.trim();
   }
   const cell=document.getElementById('pdecision-'+uid);const prevHtml=cell.innerHTML;cell.innerHTML='<span style="font-size:.78rem;color:var(--muted)">Saving…</span>';
+  lockWrites(8000);
   try{
     const res=await api({action:'resolveReturn',unitNo,decision:'unavailable',reason,adminCalls:counts.adminCalls,adminSuccessful:counts.adminSuccessful});
+    lockWrites(0);
     if(res.success){
+      removePendingRow(unitNo,uid);
       toast('🚫 Unit '+unitNo+' held: '+reason,'success');
-      loadPending();refreshAll();
+      refreshAll(); // reconcile with the server in the background
     }else{cell.innerHTML=prevHtml;toast('❌ '+res.message,'error');}
-  }catch{cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
+  }catch{lockWrites(0);cell.innerHTML=prevHtml;toast('❌ Connection error.','error');}
 }
 
 // ── UNRETURNED ────────────────────────────────────────
