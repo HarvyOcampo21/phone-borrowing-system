@@ -129,6 +129,7 @@
     .btn-danger{background:rgba(var(--red-rgb),.1);border:1.5px solid rgba(var(--red-rgb),.25);color:var(--red)}
     .btn-danger:hover{background:rgba(var(--red-rgb),.18)}
     .btn-verify{background:rgba(var(--green-rgb),.1);border:1.5px solid rgba(var(--green-rgb),.25);color:var(--green);font-size:.74rem;padding:5px 11px}
+    .btn-verify:hover{background:rgba(var(--green-rgb),.18)}
     .btn-warn  {background:rgba(var(--yellow-rgb),.1); border:1.5px solid rgba(var(--yellow-rgb),.25); color:var(--yellow);font-size:.74rem;padding:5px 11px}
     .btn-info  {background:rgba(var(--primary-rgb),.1);border:1.5px solid rgba(var(--primary-rgb),.25);color:var(--primary);font-size:.74rem;padding:5px 11px}
     .btn-sm    {padding:7px 13px;font-size:.76rem}
@@ -306,31 +307,30 @@
   <div class="app-layout">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-brand">
-        <div class="icon">📱</div>
         <h2>Phone Borrowing System</h2><p>Admin Portal</p>
       </div>
       <div class="nav-section">
         <div class="nav-label">Overview</div>
-        <div class="nav-item active" onclick="showPage('dashboard',this)"><span class="nav-icon">📊</span>Dashboard</div>
-        <div class="nav-item" onclick="showPage('records',this)"><span class="nav-icon">📋</span>All Records</div>
+        <div class="nav-item active" onclick="showPage('dashboard',this)">Dashboard</div>
+        <div class="nav-item" onclick="showPage('records',this)">All Records</div>
       </div>
       <div class="nav-section">
         <div class="nav-label">Management</div>
-        <div class="nav-item" onclick="showPage('agents',this)"><span class="nav-icon">👤</span>Manage Agents</div>
-        <div class="nav-item" onclick="showPage('teams',this)"><span class="nav-icon">👥</span>Manage Teams</div>
-        <div class="nav-item" onclick="showPage('phones',this)"><span class="nav-icon">📱</span>Manage Phones</div>
+        <div class="nav-item" onclick="showPage('agents',this)">Manage Agents</div>
+        <div class="nav-item" onclick="showPage('teams',this)">Manage Teams</div>
+        <div class="nav-item" onclick="showPage('phones',this)">Manage Phones</div>
       </div>
       <div class="nav-section">
         <div class="nav-label">Monitoring</div>
         <div class="nav-item" onclick="showPage('pending',this)">
-          <span class="nav-icon">📥</span>Pending Returns
+          Pending Returns
           <span class="badge-alert" id="pendingBadge">0</span>
         </div>
         <div class="nav-item" onclick="showPage('unreturned',this)">
-          <span class="nav-icon">⚠️</span>Unreturned Units
+          Unreturned Units
           <span class="badge-alert" id="unreturnedBadge">0</span>
         </div>
-        <div class="nav-item" onclick="showPage('history',this)"><span class="nav-icon">📂</span>Unit History</div>
+        <div class="nav-item" onclick="showPage('history',this)">Unit History</div>
       </div>
       <div class="sidebar-footer">
         <button class="theme-toggle" id="sidebarThemeToggle" onclick="toggleTheme()" type="button"><span class="ico" id="themeToggleIcon">🌙</span><span id="themeToggleLabel">Dark mode</span></button>
@@ -1373,8 +1373,10 @@ function renderPhoneTable(){
     const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
     let action;
     if(p.available){
-      action=`<button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>
-        <button class="btn btn-logout btn-sm" onclick="showAdminHold('${p.unitNo}','${uid}')" style="margin-top:5px">Hold ▾</button>`;
+      action=`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+        <button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>
+        <button class="btn btn-logout btn-sm" onclick="showAdminHold('${p.unitNo}','${uid}')" style="width:auto">Hold ▾</button>
+      </div>`;
     }else if(p.pendingReturn){
       action=`<span style="color:var(--muted);font-size:.74rem">See Pending Returns</span>`;
     }else if(p.unavailableReason){
@@ -1500,9 +1502,11 @@ async function loadPending(){
         <td><input type="number" class="verify-input" id="ps-${uid}" min="0" placeholder="0"/></td>
         <td><span class="tag ${p.physicallyReturned?'tag-today':'tag-unverified'}" id="ptag-${uid}">${p.physicallyReturned?'📦 Physically Back':'Unverified'}</span></td>
         <td id="pdecision-${uid}">
-          ${p.physicallyReturned?'':`<button class="btn btn-logout btn-sm" onclick="confirmPhysical('${p.unitNo}','${uid}')" type="button" style="margin-bottom:5px">📦 Confirm Physical Return</button><br/>`}
-          <button class="btn btn-verify" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
-          <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button" style="margin-top:5px">🚫 Hold</button>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+            ${p.physicallyReturned?'':`<button class="btn btn-logout btn-sm" onclick="confirmPhysical('${p.unitNo}','${uid}')" type="button" style="width:auto">📦 Confirm Physical Return</button>`}
+            <button class="btn btn-verify btn-sm" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
+            <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button">🚫 Hold</button>
+          </div>
         </td>
       </tr>`;
     }).join('');
