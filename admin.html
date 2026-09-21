@@ -881,6 +881,25 @@ function isOverdueReturn(r){
   const hrs=(new Date(r['Return Time'])-new Date(r['Borrow Time']))/3600000;
   return hrs>=OVERDUE_HOURS;
 }
+// How far past the OVERDUE_HOURS threshold this return was, in ms (0 if not overdue).
+function overdueMs(r){
+  if(!r['Return Time']||!r['Borrow Time'])return 0;
+  const diff=new Date(r['Return Time'])-new Date(r['Borrow Time'])-OVERDUE_HOURS*3600000;
+  return diff>0?diff:0;
+}
+function fmtOverdueDuration(ms){
+  const totalMin=Math.max(0,Math.floor(ms/60000));
+  const d=Math.floor(totalMin/1440),h=Math.floor((totalMin%1440)/60),m=totalMin%60;
+  const parts=[];
+  if(d>0)parts.push(d+'d');
+  if(d>0||h>0)parts.push(h+'h');
+  parts.push(m+'m');
+  return parts.join(' ');
+}
+function overdueTagHtml(r){
+  if(!isOverdueReturn(r))return '';
+  return ` <span class="tag tag-flagged">⏰ Overdue by ${fmtOverdueDuration(overdueMs(r))}</span>`;
+}
 
 // Once admin has verified/flagged a record, the ADMIN's counted calls are
 // the source of truth (not the agent's self-reported numbers) — records
@@ -1013,7 +1032,10 @@ function viewAgentPerformance(name){
 function callCellHtml(agentVal,adminVal,effVal,flagged){
   if(agentVal===''||agentVal==null)return '—';
   if(flagged&&adminVal!==''&&adminVal!=null&&parseInt(adminVal)!==parseInt(agentVal)){
-    return `<span style="text-decoration:line-through;color:var(--muted)">${agentVal}</span> <span style="color:var(--red);font-weight:700">${adminVal}</span>`;
+    return `<div style="display:flex;flex-direction:column;gap:1px;line-height:1.3">
+      <span style="font-size:.68rem"><span style="color:var(--muted);font-weight:600">Agent</span> <span style="text-decoration:line-through;color:var(--muted)">${agentVal}</span></span>
+      <span style="font-size:.68rem"><span style="color:var(--red);font-weight:600">Admin</span> <span style="color:var(--red);font-weight:700">${adminVal}</span></span>
+    </div>`;
   }
   return effVal;
 }
@@ -1050,14 +1072,13 @@ function renderAgentDashboard(name){
   if(!recent.length){tbody.innerHTML='<tr class="empty-row"><td colspan="6">No records in this period.</td></tr>';return;}
   tbody.innerHTML=recent.map(r=>{
     const isActive=!r['Return Time'];const status=r['Verification Status']||'Unverified';
-    const overdue=isOverdueReturn(r);
     return `<tr>
       <td>Unit ${r['Phone Unit']||'—'}</td>
       <td>${fmt(r['Borrow Time'])}</td>
       <td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
       <td>${r['Return Time']?callCellHtml(r['Clients Called (Agent)'],r['Clients Called (Admin)'],effCalls(r),status==='Flagged'):'—'}</td>
       <td>${r['Return Time']?callCellHtml(r['Successful Calls (Agent)'],r['Successful Calls (Admin)'],effSuccessful(r),status==='Flagged'):'—'}</td>
-      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdue?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdueTagHtml(r)}</td>
     </tr>`;
   }).join('');
 }
@@ -1214,7 +1235,7 @@ function renderRecordsTable(agTeam){
       <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
       <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
       <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
-      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${isOverdueReturn(r)?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdueTagHtml(r)}</td>
     </tr>`;
   }).join('');
   renderPagination('recordsPagination',page,pages,p=>{state.records.page=p;renderRecordsTable();});
@@ -1631,7 +1652,7 @@ async function loadUnreturned(){
       <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
       <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
       <td>${r.pendingReturn?'<span class="tag tag-unverified">📥 Yes — pending</span>':'<span style="color:var(--muted);font-size:.78rem">No</span>'}</td>
-      <td>${r.status==='Overdue'?'<span class="tag tag-overdue">⚠️ Overdue</span>':'<span class="tag tag-today">🟡 Active</span>'}</td>
+      <td>${r.status==='Overdue'?`<span class="tag tag-overdue">⚠️ Overdue by ${fmtOverdueDuration(Date.now()-new Date(r.borrowTime)-OVERDUE_HOURS*3600000)}</span>`:'<span class="tag tag-today">🟡 Active</span>'}</td>
     </tr>`).join('');
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="7">Failed to load.</td></tr>';}
 }
@@ -1660,7 +1681,7 @@ async function loadHistory(){
         <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
         <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
         <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
-        <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${isOverdueReturn(r)?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
+        <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdueTagHtml(r)}</td>
       </tr>`;
     }).join('');
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="11">Failed to load.</td></tr>';}
