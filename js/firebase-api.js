@@ -73,7 +73,12 @@ async function getAgents() {
   const agents = [];
   snap.forEach((d) => {
     const v = d.data();
-    agents.push({ name: v.name, team: v.team || "" });
+    agents.push({
+      name: v.name,
+      team: v.team || "",
+      pinResetRequested: !!v.pinResetRequested,
+      pinResetRequestedAt: toIso(v.pinResetRequestedAt),
+    });
   });
   return { success: true, agents };
 }
@@ -521,6 +526,23 @@ async function verifyRecord(data) {
   return { success: true, status, message: "Record marked as " + status + "." };
 }
 
+// Agent tapped "Forgot PIN?" on the login screen and gave their email.
+// We flag their agent doc so it surfaces on the admin portal (badge +
+// per-row indicator); no PIN is touched here — clearing it is still an
+// admin-only action via resetPin.
+async function requestPinReset(data) {
+  const email = (data.email || "").trim().toLowerCase();
+  if (!email) return { success: false, message: "Enter your email first, then tap Forgot PIN." };
+  const q = query(collection(db, "agents"), where("email", "==", email));
+  const snap = await getDocs(q);
+  if (snap.empty) return { success: false, message: "No account found for that email." };
+  await updateDoc(snap.docs[0].ref, {
+    pinResetRequested: true,
+    pinResetRequestedAt: Timestamp.now(),
+  });
+  return { success: true, message: "Request sent. An admin will reset your PIN shortly." };
+}
+
 // ── PIN (stored on the agent doc) ───────────────────────────
 async function checkPin(data) {
   const snap = await getDoc(doc(db, "agents", slug(data.agentName)));
@@ -533,7 +555,7 @@ async function setPin(data) {
   const snap = await getDoc(ref);
   if (!snap.exists()) return { success: false, message: "Agent not found." };
   const hadPin = !!snap.data().pin;
-  await updateDoc(ref, { pin: data.pin.toString() });
+  await updateDoc(ref, { pin: data.pin.toString(), pinResetRequested: false, pinResetRequestedAt: null });
   return { success: true, message: hadPin ? "PIN updated." : "PIN set." };
 }
 
@@ -550,7 +572,7 @@ async function resetPin(data) {
   const snap = await getDoc(ref);
   if (!snap.exists() || !snap.data().pin)
     return { success: false, message: "No PIN found for this agent." };
-  await updateDoc(ref, { pin: "" });
+  await updateDoc(ref, { pin: "", pinResetRequested: false, pinResetRequestedAt: null });
   return { success: true, message: "PIN reset. Agent can set a new PIN on next login." };
 }
 
@@ -658,6 +680,7 @@ export async function api(payload) {
       case "setPin":        return await setPin(payload);
       case "verifyPin":     return await verifyPin(payload);
       case "resetPin":      return await resetPin(payload);
+      case "requestPinReset": return await requestPinReset(payload);
       default: return { success: false, message: "Unknown action." };
     }
   } catch (err) {

@@ -808,7 +808,8 @@
             <a
               href="#"
               class="link-sm"
-              onclick="toast('Contact your admin to reset your PIN.','info');return false;"
+              id="forgotPinLink"
+              onclick="handleForgotPin();return false;"
               >Forgot PIN?</a
             >
           </div>
@@ -1182,6 +1183,31 @@
           const p = allPhones.find((x) => String(x.unitNo) === String(pending));
           if (p && p.available) openBorrow(p);
         }
+      }
+
+      async function handleForgotPin() {
+        const email = document.getElementById("loginEmail").value.trim().toLowerCase();
+        const err = document.getElementById("loginError");
+        err.textContent = "";
+        if (!email) {
+          err.textContent = "Enter your email above first, then tap Forgot PIN.";
+          document.getElementById("loginEmail").focus();
+          return;
+        }
+        const link = document.getElementById("forgotPinLink");
+        const originalText = link.textContent;
+        link.textContent = "Notifying admin…";
+        try {
+          const res = await api({ action: "requestPinReset", email });
+          if (res.success) {
+            toast("✅ Request sent. An admin will reset your PIN shortly.", "success");
+          } else {
+            err.textContent = res.message || "Could not send request.";
+          }
+        } catch {
+          err.textContent = "Connection error. Please try again.";
+        }
+        link.textContent = originalText;
       }
 
       async function submitLogin() {

@@ -75,6 +75,7 @@
     .nav-item.active{background:var(--sidebar-active-bg);color:var(--primary);font-weight:600}
     .nav-item .nav-icon{font-size:.92rem;width:20px;text-align:center;flex-shrink:0}
     .badge-alert{margin-left:auto;background:var(--red);color:#fff;font-size:.6rem;font-weight:700;padding:1px 6px;border-radius:20px;display:none}
+    .pin-flag{display:inline-flex;align-items:center;gap:4px;font-size:.68rem;font-weight:700;color:#fff;background:var(--red);padding:2px 8px;border-radius:20px;margin-top:4px;white-space:nowrap;animation:pulse 2s infinite}
     .sidebar-footer{margin-top:auto;padding:14px 12px;border-top:1px solid var(--border)}
     .live-bar{display:flex;align-items:center;gap:6px;font-size:.67rem;color:var(--muted);padding:5px 8px;margin-bottom:7px}
     .live-dot{width:6px;height:6px;border-radius:50%;background:var(--green);animation:pulse 2s infinite;flex-shrink:0}
@@ -316,7 +317,10 @@
       </div>
       <div class="nav-section">
         <div class="nav-label">Management</div>
-        <div class="nav-item" onclick="showPage('agents',this)">Manage Agents</div>
+        <div class="nav-item" onclick="showPage('agents',this)">
+          Manage Agents
+          <span class="badge-alert" id="agentPinBadge">0</span>
+        </div>
         <div class="nav-item" onclick="showPage('teams',this)">Manage Teams</div>
         <div class="nav-item" onclick="showPage('phones',this)">Manage Phones</div>
       </div>
@@ -431,6 +435,7 @@
             <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
             <div class="stat-card yellow"><div class="stat-icon">🔴</div><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
             <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
+            <div class="stat-card red" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-icon">🔔</div><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
           </div>
 
           <div class="chart-grid">
@@ -798,6 +803,11 @@ function showPage(name,el){
   if(name==='teams')      renderTeamsTable();
 }
 
+function jumpToAgentsFromDashboard(){
+  const navAgents=document.querySelector('.nav-item[onclick*="\'agents\'"]');
+  if(navAgents)showPage('agents',navAgents);
+}
+
 // ── LOAD ALL ─────────────────────────────────────────────
 function lockWrites(ms=15000){writeLockedUntil=Date.now()+ms;}
 
@@ -815,6 +825,7 @@ async function loadAll(){
     if(un.success){changed('unreturned',un.unreturned);}
     updateUnreturnedBadge(un);
     updatePendingBadge();
+    updateAgentPinBadge();
     renderDashboard();
     setLiveLabel();
   }catch{}
@@ -844,8 +855,14 @@ async function refreshAll(){
       }
     }
     if(ag.success&&changed('agents',ag.agents)){
-      dataChanged=true;cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);populateTeamDropdowns();
+      dataChanged=true;
+      const prevRequested=new Set(cacheAgents.filter(a=>a.pinResetRequested).map(a=>a.name));
+      const newlyRequested=ag.agents.filter(a=>a.pinResetRequested&&!prevRequested.has(a.name));
+      if(newlyRequested.length===1)toast(`🔔 ${newlyRequested[0].name} requested a PIN reset.`,'info');
+      else if(newlyRequested.length>1)toast(`🔔 PIN reset requested: ${newlyRequested.map(a=>a.name).join(', ')}`,'info');
+      cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);populateTeamDropdowns();
     }
+    updateAgentPinBadge();
     if(ph.success&&Date.now()>writeLockedUntil&&changed('phones',ph.phones)){
       dataChanged=true;cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones(false);
     }
@@ -1008,6 +1025,7 @@ function renderDashboard(){
   document.getElementById('s-active').textContent =cachePhones.filter(p=>!p.available).length;
   document.getElementById('s-avail').textContent  =cachePhones.filter(p=>p.available).length;
   document.getElementById('s-avail-sub').textContent=`of ${cachePhones.length} units`;
+  document.getElementById('s-pinreq').textContent=cacheAgents.filter(a=>a.pinResetRequested).length;
   document.getElementById('dashUpdated').textContent='Updated '+new Date().toLocaleTimeString();
 
   // Per-agent stats
@@ -1394,14 +1412,26 @@ function renderAgentTable(){
   document.getElementById('agentCount').textContent=total?`${total} agent${total!==1?'s':''}`:'' ;
   if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No agents found.</td></tr>';document.getElementById('agentPagination').innerHTML='';return;}
   tbody.innerHTML=slice.map((a,i)=>{
-    const teamOpts=['<option value="">— No Team —</option>',...cacheTeams.map(t=>`<option value="${t.teamName}"${a.team===t.teamName?' selected':''}>${t.teamName}</option>`)].join('');
+    const agentTeam=(a.team||'').trim();
+    const teamMatchesKnownTeam=cacheTeams.some(t=>t.teamName===agentTeam);
+    const teamOptsArr=['<option value="">— No Team —</option>',...cacheTeams.map(t=>`<option value="${t.teamName}"${a.team===t.teamName?' selected':''}>${t.teamName}</option>`)];
+    // Agent has a team string that doesn't match any team in "Manage Teams" — surface it instead
+    // of silently falling back to "— No Team —" so mismatches (typos, deleted teams, teams that
+    // were never actually created) are visible and fixable rather than hidden.
+    if(agentTeam&&!teamMatchesKnownTeam){
+      const safeTeam=agentTeam.replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      teamOptsArr.push(`<option value="${safeTeam}" selected>⚠️ ${safeTeam} (not in Manage Teams)</option>`);
+    }
+    const teamOpts=teamOptsArr.join('');
+    const pinRequestedAt=a.pinResetRequestedAt?new Date(a.pinResetRequestedAt).toLocaleString():'';
+    const pinFlag=a.pinResetRequested?`<div class="pin-flag" title="${pinRequestedAt?'Requested '+pinRequestedAt:''}">🔔 PIN reset requested</div>`:'';
     return `<tr>
       <td style="color:var(--muted);width:36px">${start+i+1}</td>
-      <td style="font-weight:500">👤 ${a.name}</td>
+      <td style="font-weight:500">👤 ${a.name}${pinFlag}</td>
       <td><select onchange="assignTeam('${a.name.replace(/'/g,"\\'")}',this.value)" style="width:130px;padding:5px 8px;font-size:.8rem;border-radius:7px;border:1.5px solid var(--border);background:var(--input-bg)">${teamOpts}</select></td>
       <td style="display:flex;gap:5px;flex-wrap:wrap">
         <button class="btn btn-info" onclick="viewAgentPerformance('${a.name.replace(/'/g,"\\'")}')">📊 Dashboard</button>
-        <button class="btn btn-warn" onclick="resetAgentPin('${a.name.replace(/'/g,"\\'")}')">Reset PIN</button>
+        <button class="btn btn-warn"${a.pinResetRequested?' style="box-shadow:0 0 0 2px var(--red)"':''} onclick="resetAgentPin('${a.name.replace(/'/g,"\\'")}')">Reset PIN</button>
         <button class="btn btn-danger btn-sm" onclick="removeAgent('${a.name.replace(/'/g,"\\'")}')">Remove</button>
       </td>
     </tr>`;
@@ -1431,7 +1461,11 @@ async function assignTeam(agentName,team){
 async function resetAgentPin(name){
   if(!confirm(`Reset PIN for "${name}"?`))return;
   const res=await api({action:'resetPin',agentName:name});
-  if(res.success)toast('✅ PIN reset.','success');else toast('❌ '+res.message,'error');
+  if(res.success){
+    toast('✅ PIN reset.','success');
+    const agent=state.agents.data.find(a=>a.name===name);
+    if(agent){agent.pinResetRequested=false;agent.pinResetRequestedAt='';cacheAgents=[...state.agents.data];renderAgentTable();updateAgentPinBadge();}
+  }else toast('❌ '+res.message,'error');
 }
 
 // ── TEAMS ─────────────────────────────────────────────
@@ -1612,6 +1646,13 @@ const HOLD_REASONS=["Not charged","SIM restricted","Under verification (previous
 function updatePendingBadge(){
   const c=cachePhones.filter(p=>p.pendingReturn).length;
   const b=document.getElementById('pendingBadge');
+  b.style.display=c>0?'inline-block':'none';b.textContent=c;
+}
+// ── PIN RESET REQUESTS ──────────────────────────────────
+function updateAgentPinBadge(){
+  const c=cacheAgents.filter(a=>a.pinResetRequested).length;
+  const b=document.getElementById('agentPinBadge');
+  if(!b)return;
   b.style.display=c>0?'inline-block':'none';b.textContent=c;
 }
 // True while a pending row has unsaved admin input on it: call-count
