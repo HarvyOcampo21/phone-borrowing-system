@@ -526,6 +526,57 @@ async function verifyRecord(data) {
   return { success: true, status, message: "Record marked as " + status + "." };
 }
 
+// ── NOTIFICATION DISMISSALS ──────────────────────────────────
+// Notifications themselves (PIN reset requests, pending returns) are
+// derived live from the agents/phones collections — there's no separate
+// "notifications" collection for those. Dismissing one just records that
+// its key has been acknowledged, shared across every admin, in this small
+// collection. The admin portal is responsible for deleting a dismissal once
+// its underlying notification is no longer live (see the "clearDismissal"
+// calls it fires), so this collection doesn't grow forever.
+function notifDocId(key) {
+  return key.toString().replace(/\//g, "_").slice(0, 400);
+}
+
+async function getDismissedNotifs() {
+  const snap = await getDocs(collection(db, "notifDismissals"));
+  const keys = [];
+  snap.forEach((d) => keys.push(d.data().key || d.id));
+  return { success: true, keys };
+}
+
+async function dismissNotif(data) {
+  const key = (data.key || "").toString();
+  if (!key) return { success: false, message: "Missing notification key." };
+  await setDoc(doc(db, "notifDismissals", notifDocId(key)), {
+    key,
+    dismissedAt: Timestamp.now(),
+    dismissedBy: data.dismissedBy || "",
+  });
+  return { success: true };
+}
+
+async function dismissAllNotifs(data) {
+  const keys = Array.isArray(data.keys) ? data.keys : [];
+  await Promise.all(
+    keys.map((key) =>
+      setDoc(doc(db, "notifDismissals", notifDocId(key)), {
+        key,
+        dismissedAt: Timestamp.now(),
+        dismissedBy: data.dismissedBy || "",
+      })
+    )
+  );
+  return { success: true };
+}
+
+async function clearDismissal(data) {
+  const key = (data.key || "").toString();
+  if (!key) return { success: false, message: "Missing notification key." };
+  await deleteDoc(doc(db, "notifDismissals", notifDocId(key)));
+  return { success: true };
+}
+
 // Agent tapped "Forgot PIN?" on the login screen and gave their email.
 // We flag their agent doc so it surfaces on the admin portal (badge +
 // per-row indicator); no PIN is touched here — clearing it is still an
@@ -681,6 +732,10 @@ export async function api(payload) {
       case "verifyPin":     return await verifyPin(payload);
       case "resetPin":      return await resetPin(payload);
       case "requestPinReset": return await requestPinReset(payload);
+      case "getDismissedNotifs": return await getDismissedNotifs();
+      case "dismissNotif":      return await dismissNotif(payload);
+      case "dismissAllNotifs":  return await dismissAllNotifs(payload);
+      case "clearDismissal":    return await clearDismissal(payload);
       default: return { success: false, message: "Unknown action." };
     }
   } catch (err) {
