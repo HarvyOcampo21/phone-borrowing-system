@@ -605,8 +605,11 @@ async function setPin(data) {
   const ref = doc(db, "agents", slug(data.agentName));
   const snap = await getDoc(ref);
   if (!snap.exists()) return { success: false, message: "Agent not found." };
+  const newPin = (data.pin || "").toString();
+  if (!/^[0-9]{6}$/.test(newPin))
+    return { success: false, message: "PIN must be exactly 6 digits." };
   const hadPin = !!snap.data().pin;
-  await updateDoc(ref, { pin: data.pin.toString(), pinResetRequested: false, pinResetRequestedAt: null });
+  await updateDoc(ref, { pin: newPin, pinResetRequested: false, pinResetRequestedAt: null });
   return { success: true, message: hadPin ? "PIN updated." : "PIN set." };
 }
 
@@ -637,6 +640,8 @@ async function agentLogin(data) {
   const pin = (data.pin || "").toString();
   if (!email || !pin)
     return { success: false, message: "Email and PIN are required." };
+  if (!/^[0-9]{6}$/.test(pin))
+    return { success: false, message: "PIN must be exactly 6 digits." };
   const q = query(collection(db, "agents"), where("email", "==", email));
   const snap = await getDocs(q);
   if (snap.empty)

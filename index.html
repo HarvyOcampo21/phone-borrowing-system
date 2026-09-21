@@ -581,6 +581,92 @@
         margin: -6px 0 10px;
       }
 
+      /* ---------- 6-digit PIN boxes ---------- */
+      .pin-boxes {
+        position: relative;
+      }
+      /* The real <input> sits invisibly on top of the boxes so the native
+         numeric keypad, paste and password managers all keep working. */
+      .field .pin-boxes input.pin-input {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        border: 0;
+        background: transparent;
+        opacity: 0;
+        z-index: 2;
+        cursor: text;
+        caret-color: transparent;
+        font-size: 16px; /* stops iOS zooming in on focus */
+      }
+      .pin-cells {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+      }
+      .pin-cell {
+        flex: 1 1 0;
+        min-width: 0;
+        max-width: 46px;
+        height: 52px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 1.5px solid #94a3b8;
+        border-radius: 10px;
+        background: #fff;
+        color: var(--text);
+        transition: border-color 0.12s, box-shadow 0.12s, background 0.12s;
+      }
+      .pin-cell.filled {
+        border-color: var(--green);
+        background: #f0fdf4;
+      }
+      .pin-cell.filled::after {
+        content: "*";
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1;
+        margin-top: 10px;
+      }
+      .pin-cell.active {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.18);
+      }
+      .pin-dash {
+        flex: 0 0 12px;
+        text-align: center;
+        color: var(--muted);
+        font-weight: 700;
+      }
+      .pin-boxes.error .pin-cell,
+      .pin-boxes.error .pin-cell.filled {
+        border-color: var(--red);
+        background: #fef2f2;
+      }
+      .pin-boxes.error .pin-cells {
+        animation: pinShake 0.35s;
+      }
+      @keyframes pinShake {
+        20%, 60% { transform: translateX(-6px); }
+        40%, 80% { transform: translateX(6px); }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .pin-boxes.error .pin-cells { animation: none; }
+      }
+      /* Sign In / Create PIN stay grey until the form is complete */
+      .btn-pin:disabled,
+      .btn-pin:disabled:hover {
+        background: #cbd5e1;
+        color: #64748b;
+        opacity: 1;
+        cursor: not-allowed;
+      }
+
       /* ---------- toast ---------- */
       #toast {
         position: fixed;
@@ -781,23 +867,27 @@
               id="loginEmail"
               placeholder="you@company.com"
               autocomplete="username"
+              oninput="updateLoginBtn()"
+              onkeydown="if(event.key==='Enter'){event.preventDefault();pinBoxes.loginPin.focus();}"
             />
           </div>
           <div class="field" style="margin-bottom: 6px">
-            <label>PIN</label>
-            <input
-              type="password"
-              id="loginPin"
-              placeholder="Enter your PIN"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              maxlength="8"
-              autocomplete="off"
-              onkeydown="if(event.key==='Enter')submitLogin()"
-            />
+            <label for="loginPin">6-digit PIN</label>
+            <div class="pin-boxes">
+              <input
+                type="password"
+                class="pin-input"
+                id="loginPin"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                maxlength="6"
+                autocomplete="off"
+                aria-label="6-digit PIN"
+              />
+            </div>
           </div>
           <div class="field-error" id="loginError"></div>
-          <button class="btn btn-primary" id="loginBtn" onclick="submitLogin()" style="width: 100%">
+          <button class="btn btn-primary btn-pin" id="loginBtn" onclick="submitLogin()" style="width: 100%" disabled>
             Sign In
           </button>
           <div class="modal-row">
@@ -817,37 +907,42 @@
 
         <div id="loginStepPinSetup" style="display: none">
           <div class="field">
-            <label>Create PIN</label>
-            <input
-              type="password"
-              id="newPin"
-              placeholder="4–6 digit PIN"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              maxlength="8"
-              autocomplete="off"
-              onkeydown="if(event.key==='Enter')document.getElementById('confirmPin').focus()"
-            />
+            <label for="newPin">Create 6-digit PIN</label>
+            <div class="pin-boxes">
+              <input
+                type="password"
+                class="pin-input"
+                id="newPin"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                maxlength="6"
+                autocomplete="off"
+                aria-label="Create a 6-digit PIN"
+              />
+            </div>
           </div>
           <div class="field" style="margin-bottom: 6px">
-            <label>Confirm PIN</label>
-            <input
-              type="password"
-              id="confirmPin"
-              placeholder="Re-enter PIN"
-              inputmode="numeric"
-              pattern="[0-9]*"
-              maxlength="8"
-              autocomplete="off"
-              onkeydown="if(event.key==='Enter')submitPinSetup()"
-            />
+            <label for="confirmPin">Confirm PIN</label>
+            <div class="pin-boxes">
+              <input
+                type="password"
+                class="pin-input"
+                id="confirmPin"
+                inputmode="numeric"
+                pattern="[0-9]*"
+                maxlength="6"
+                autocomplete="off"
+                aria-label="Re-enter your 6-digit PIN"
+              />
+            </div>
           </div>
           <div class="field-error" id="pinSetupError"></div>
           <button
-            class="btn btn-primary"
+            class="btn btn-primary btn-pin"
             id="pinSetupBtn"
             onclick="submitPinSetup()"
             style="width: 100%"
+            disabled
           >
             Create PIN &amp; Continue
           </button>
@@ -1141,6 +1236,129 @@
         openBorrow(p);
       }
 
+      // ---------- 6-digit PIN boxes ----------
+      // Six boxes (3 – 3) driven by one invisible <input>, so the native numeric
+      // keypad, paste and Enter all work. Digits only, exactly PIN_LENGTH.
+      const PIN_LENGTH = 6;
+      const PIN_RE = /^[0-9]{6}$/;
+      const pinBoxes = {};
+
+      function initPinBox(id, { onChange, onComplete, onEnter } = {}) {
+        const input = document.getElementById(id);
+        const wrap = input.parentElement;
+        const row = document.createElement("div");
+        row.className = "pin-cells";
+        row.setAttribute("aria-hidden", "true");
+        const cells = [];
+        for (let i = 0; i < PIN_LENGTH; i++) {
+          if (i === PIN_LENGTH / 2) {
+            const dash = document.createElement("span");
+            dash.className = "pin-dash";
+            dash.textContent = "–";
+            row.appendChild(dash);
+          }
+          const c = document.createElement("span");
+          c.className = "pin-cell";
+          row.appendChild(c);
+          cells.push(c);
+        }
+        wrap.appendChild(row);
+
+        const render = () => {
+          const len = input.value.length;
+          const focused = document.activeElement === input;
+          cells.forEach((c, i) => {
+            c.classList.toggle("filled", i < len);
+            c.classList.toggle("active", focused && len < PIN_LENGTH && i === len);
+          });
+        };
+        const caretToEnd = () =>
+          requestAnimationFrame(() => {
+            try { input.setSelectionRange(input.value.length, input.value.length); } catch {}
+          });
+
+        input.addEventListener("input", () => {
+          const clean = input.value.replace(/\D/g, "").slice(0, PIN_LENGTH);
+          if (clean !== input.value) input.value = clean;
+          wrap.classList.remove("error");
+          render();
+          if (onChange) onChange(clean);
+          if (clean.length === PIN_LENGTH && onComplete) onComplete(clean);
+        });
+        input.addEventListener("paste", (e) => {
+          e.preventDefault();
+          const text = (e.clipboardData || window.clipboardData).getData("text");
+          const digits = text.replace(/\D/g, "").slice(0, PIN_LENGTH);
+          if (!digits) return;
+          input.value = digits;
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+        });
+        input.addEventListener("keydown", (e) => {
+          if (e.key === "Enter") { if (onEnter) onEnter(); return; }
+          if (["ArrowLeft", "ArrowRight", "Home"].includes(e.key)) { e.preventDefault(); return; }
+          // block anything that isn't a digit (control/navigation keys have key.length > 1)
+          if (e.key.length === 1 && !/[0-9]/.test(e.key) && !e.ctrlKey && !e.metaKey && !e.altKey) {
+            e.preventDefault();
+          }
+        });
+        ["focus", "click", "mouseup", "touchend"].forEach((ev) => input.addEventListener(ev, caretToEnd));
+        input.addEventListener("focus", render);
+        input.addEventListener("blur", render);
+
+        pinBoxes[id] = {
+          value: () => input.value,
+          focus: () => input.focus(),
+          clear() {
+            input.value = "";
+            wrap.classList.remove("error");
+            render();
+          },
+          setError(on) {
+            if (on) {
+              wrap.classList.remove("error");
+              void wrap.offsetWidth; // restart the shake animation
+            }
+            wrap.classList.toggle("error", !!on);
+          },
+        };
+      }
+
+      function updateLoginBtn() {
+        const ok =
+          document.getElementById("loginEmail").value.trim() !== "" &&
+          PIN_RE.test(pinBoxes.loginPin.value());
+        document.getElementById("loginBtn").disabled = !ok;
+      }
+
+      function updatePinSetupState() {
+        const a = pinBoxes.newPin.value();
+        const b = pinBoxes.confirmPin.value();
+        const mismatch = a.length === PIN_LENGTH && b.length === PIN_LENGTH && a !== b;
+        pinBoxes.confirmPin.setError(mismatch);
+        document.getElementById("pinSetupError").textContent = mismatch ? "PINs do not match." : "";
+        document.getElementById("pinSetupBtn").disabled = !(PIN_RE.test(a) && a === b);
+      }
+
+      function resetPinInputs() {
+        Object.values(pinBoxes).forEach((b) => b.clear());
+        updateLoginBtn();
+        updatePinSetupState();
+      }
+
+      initPinBox("loginPin", {
+        onChange: updateLoginBtn,
+        onEnter: () => { if (!document.getElementById("loginBtn").disabled) submitLogin(); },
+      });
+      initPinBox("newPin", {
+        onChange: updatePinSetupState,
+        onComplete: () => pinBoxes.confirmPin.focus(),
+        onEnter: () => pinBoxes.confirmPin.focus(),
+      });
+      initPinBox("confirmPin", {
+        onChange: updatePinSetupState,
+        onEnter: () => { if (!document.getElementById("pinSetupBtn").disabled) submitPinSetup(); },
+      });
+
       // ---------- login modal ----------
       let pendingRemember = true;
       let pendingAgentNameForPinSetup = null;
@@ -1150,15 +1368,15 @@
         document.getElementById("loginStepPinSetup").style.display = step === "pinSetup" ? "" : "none";
         document.getElementById("modalSub").textContent =
           step === "pinSetup"
-            ? "First time in — create a PIN to finish setting up your account."
+            ? "First time in — create a 6-digit PIN to finish setting up your account."
             : "Please sign in to continue";
       }
 
       function openLogin() {
         document.getElementById("loginOverlay").classList.add("show");
         document.getElementById("loginEmail").value = "";
-        document.getElementById("loginPin").value = "";
         document.getElementById("loginError").textContent = "";
+        resetPinInputs();
         showLoginStep("creds");
         setTimeout(() => document.getElementById("loginEmail").focus(), 50);
       }
@@ -1167,6 +1385,7 @@
         document.getElementById("loginOverlay").classList.remove("show");
         pendingUnitAfterLogin = null;
         pendingAgentNameForPinSetup = null;
+        resetPinInputs();
       }
 
       async function completeLogin(agent, remember) {
@@ -1174,6 +1393,7 @@
         saveSession(currentAgent, remember);
         if (currentAgent.activeBorrowUnit) await loadActiveRecord();
         document.getElementById("loginOverlay").classList.remove("show");
+        resetPinInputs();
         onAuthChanged();
 
         const pending = pendingUnitAfterLogin;
@@ -1212,14 +1432,19 @@
 
       async function submitLogin() {
         const email = document.getElementById("loginEmail").value.trim().toLowerCase();
-        const pin = document.getElementById("loginPin").value.trim();
+        const pin = pinBoxes.loginPin.value();
         const remember = document.getElementById("keepSignedIn").checked;
         const err = document.getElementById("loginError");
         const btn = document.getElementById("loginBtn");
         err.textContent = "";
 
-        if (!email || !pin) {
-          err.textContent = "Please enter both fields.";
+        if (!email) {
+          err.textContent = "Please enter your email.";
+          return;
+        }
+        if (!PIN_RE.test(pin)) {
+          err.textContent = "PIN must be exactly 6 digits.";
+          pinBoxes.loginPin.setError(true);
           return;
         }
 
@@ -1232,34 +1457,40 @@
           } else if (res.needsPinSetup) {
             pendingRemember = remember;
             pendingAgentNameForPinSetup = res.agentName;
-            document.getElementById("newPin").value = "";
-            document.getElementById("confirmPin").value = "";
-            document.getElementById("pinSetupError").textContent = "";
+            pinBoxes.newPin.clear();
+            pinBoxes.confirmPin.clear();
+            updatePinSetupState();
             showLoginStep("pinSetup");
-            setTimeout(() => document.getElementById("newPin").focus(), 50);
+            setTimeout(() => pinBoxes.newPin.focus(), 50);
           } else {
             err.textContent = res.message || "Invalid email or PIN.";
+            // wrong PIN: clear it, flag the boxes and let them retype straight away
+            pinBoxes.loginPin.clear();
+            pinBoxes.loginPin.setError(true);
+            pinBoxes.loginPin.focus();
           }
         } catch {
           err.textContent = "Connection error. Please try again.";
         }
-        btn.disabled = false;
         btn.textContent = "Sign In";
+        updateLoginBtn();
       }
 
       async function submitPinSetup() {
-        const newPin = document.getElementById("newPin").value.trim();
-        const confirmPin = document.getElementById("confirmPin").value.trim();
+        const newPin = pinBoxes.newPin.value();
+        const confirmPin = pinBoxes.confirmPin.value();
         const err = document.getElementById("pinSetupError");
         const btn = document.getElementById("pinSetupBtn");
         err.textContent = "";
 
-        if (!/^[0-9]{4,8}$/.test(newPin)) {
-          err.textContent = "PIN must be 4–8 digits.";
+        if (!PIN_RE.test(newPin)) {
+          err.textContent = "PIN must be exactly 6 digits.";
+          pinBoxes.newPin.setError(true);
           return;
         }
         if (newPin !== confirmPin) {
           err.textContent = "PINs do not match.";
+          pinBoxes.confirmPin.setError(true);
           return;
         }
 
@@ -1285,8 +1516,8 @@
         } catch {
           err.textContent = "Connection error. Please try again.";
         }
-        btn.disabled = false;
         btn.textContent = "Create PIN & Continue";
+        updatePinSetupState();
       }
 
       // ---------- screens ----------
