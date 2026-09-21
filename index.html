@@ -169,6 +169,12 @@
         color: var(--red);
         border: 1px solid #fecaca;
       }
+      .notice.info {
+        background: #eff6ff;
+        color: var(--primary-dk);
+        border: 1px solid #bfdbfe;
+        font-weight: 500;
+      }
 
       /* ---------- grid legend / topline ---------- */
       .grid-topline {
@@ -230,8 +236,8 @@
         display: none;
         align-items: center;
         justify-content: space-between;
-        gap: 12px;
-        flex-wrap: wrap;
+        gap: 8px;
+        flex-wrap: nowrap;
         background: #eff6ff;
         border: 1px solid #bfdbfe;
         border-radius: 14px;
@@ -244,10 +250,20 @@
       .return-bar-info {
         display: flex;
         align-items: center;
-        gap: 10px;
+        gap: 8px;
         font-size: 14px;
         font-weight: 700;
         color: var(--primary-dk);
+        min-width: 0;
+        flex: 1 1 auto;
+        overflow: hidden;
+      }
+      .return-bar-info #borrowedUnitLabel {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        flex-shrink: 1;
+        min-width: 0;
       }
       .return-badge {
         display: none;
@@ -257,6 +273,8 @@
         background: #fee2e2;
         padding: 3px 9px;
         border-radius: 999px;
+        flex-shrink: 0;
+        white-space: nowrap;
       }
       .return-badge.show {
         display: inline-block;
@@ -272,6 +290,7 @@
         cursor: pointer;
         font-family: inherit;
         white-space: nowrap;
+        flex-shrink: 0;
       }
       .btn-return:hover {
         background: var(--primary-dk);
@@ -282,6 +301,24 @@
       }
       .btn-return.btn-pending:hover {
         background: #94a3b8;
+      }
+      @media (max-width: 380px) {
+        .return-bar {
+          padding: 10px 12px;
+          gap: 6px;
+        }
+        .return-bar-info {
+          font-size: 12.5px;
+          gap: 6px;
+        }
+        .return-badge {
+          font-size: 10.5px;
+          padding: 2px 7px;
+        }
+        .btn-return {
+          font-size: 12px;
+          padding: 9px 11px;
+        }
       }
 
       /* ---------- phone grid ---------- */
@@ -687,6 +724,10 @@
           </div>
           <hr class="divider" />
           <p class="card-title" style="margin-top: 4px">📞 Call Details</p>
+          <div class="notice info show">
+            <span>ℹ️</span>
+            <span>Please log your call counts honestly — admins cross-check these numbers before your return is verified, and mismatches are flagged on your record.</span>
+          </div>
           <div class="field">
             <label>Total Calls Made</label>
             <input
@@ -984,11 +1025,11 @@
 
         if (locked) {
           document.getElementById("borrowedUnitLabel").textContent =
-            "Unit " + currentAgent.activeBorrowUnit + (awaitingVerification ? " · Pending Verification" : "");
+            "Unit " + currentAgent.activeBorrowUnit;
 
           const btn = document.getElementById("returnActionBtn");
           if (awaitingVerification) {
-            btn.textContent = "⏳ Awaiting Verification";
+            btn.textContent = "⏳ Pending Review";
             btn.disabled = true;
             btn.classList.add("btn-pending");
           } else {
