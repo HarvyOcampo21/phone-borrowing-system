@@ -984,9 +984,11 @@ async function loadAll(){
       api({action:'getUnreturned'}),api({action:'getDismissedNotifs'})
     ]);
     if(rec.success){changed('records',rec.records);cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
+    // Teams must be cached BEFORE the agent table renders — its team dropdown is built from cacheTeams.
+    if(tm.success) {changed('teams',tm.teams);cacheTeams=tm.teams;populateTeamDropdowns();}
     if(ag.success) {changed('agents',ag.agents);cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
     if(ph.success) {changed('phones',ph.phones);cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
-    if(tm.success) {changed('teams',tm.teams);cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();}
+    if(tm.success) {renderTeamsTable();}
     if(un.success){changed('unreturned',un.unreturned);}
     if(dn.success){dismissedNotifs=new Set(dn.keys);}
     updateUnreturnedBadge(un);
@@ -1021,6 +1023,12 @@ async function refreshAll(){
         dataChanged=true;cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords(false);
       }
     }
+    // Teams first: the agent table's team dropdown is built from cacheTeams, so it
+    // must be current before agents render (and agents re-render if only teams changed).
+    let teamsChanged=false;
+    if(tm.success&&changed('teams',tm.teams)){
+      teamsChanged=true;cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();
+    }
     if(ag.success&&changed('agents',ag.agents)){
       dataChanged=true;
       const prevRequested=new Set(cacheAgents.filter(a=>a.pinResetRequested).map(a=>a.name));
@@ -1029,12 +1037,10 @@ async function refreshAll(){
       else if(newlyRequested.length>1)toast(`🔔 PIN reset requested: ${newlyRequested.map(a=>a.name).join(', ')}`,'info');
       cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);populateTeamDropdowns();
     }
+    if(teamsChanged&&!(ag.success&&dataChanged))filterAgents(false);
     updateAgentPinBadge();
     if(ph.success&&Date.now()>writeLockedUntil&&changed('phones',ph.phones)){
       dataChanged=true;cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones(false);
-    }
-    if(tm.success&&changed('teams',tm.teams)){
-      cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();
     }
     if(un.success){
       updateUnreturnedBadge(un);
