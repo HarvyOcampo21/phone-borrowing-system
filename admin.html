@@ -692,6 +692,18 @@ let cacheRecords=[], cacheAgents=[], cachePhones=[], cacheTeams=[];
 let chartCalls=null, chartRate=null, chartVerify=null, chartTrend=null;
 let chartAgentTrend=null, chartAgentVerify=null;
 
+// ── BACKGROUND REFRESH: change-detection + in-progress-edit protection ──
+// Snapshots of the last data we actually rendered from, per dataset. A
+// background tick that fetches identical data skips re-rendering entirely,
+// so a table an admin is looking at (or typing into) doesn't get touched
+// just because the 30s timer fired and nothing on the server changed.
+let lastJSON = {records:'',agents:'',phones:'',teams:'',unreturned:''};
+function changed(key,data){
+  const j=JSON.stringify(data);
+  if(j===lastJSON[key])return false;
+  lastJSON[key]=j;return true;
+}
+
 const state = {
   agents:  {data:[],filtered:[],page:1},
   phones:  {data:[],filtered:[],page:1},
@@ -796,10 +808,11 @@ async function loadAll(){
       api({action:'getPhones'}),api({action:'getTeams'}),
       api({action:'getUnreturned'})
     ]);
-    if(rec.success){cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
-    if(ag.success) {cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
-    if(ph.success) {cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
-    if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();}
+    if(rec.success){changed('records',rec.records);cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
+    if(ag.success) {changed('agents',ag.agents);cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
+    if(ph.success) {changed('phones',ph.phones);cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
+    if(tm.success) {changed('teams',tm.teams);cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();}
+    if(un.success){changed('unreturned',un.unreturned);}
     updateUnreturnedBadge(un);
     updatePendingBadge();
     renderDashboard();
@@ -807,6 +820,13 @@ async function loadAll(){
   }catch{}
 }
 
+// Background tick (every 30s). Goals:
+//  1. Keep every tab's data live, not just the one currently open.
+//  2. Never yank a table out from under an admin who's mid-action on it —
+//     each dataset only touches the DOM when its data actually changed
+//     (see `changed()`), tables the admin is actively typing/clicking in
+//     are skipped for this tick, and the Pending-Returns rows an admin is
+//     filling in are preserved as live DOM nodes rather than rebuilt.
 async function refreshAll(){
   try{
     const [rec,ag,ph,tm,un]=await Promise.all([
@@ -814,15 +834,42 @@ async function refreshAll(){
       api({action:'getPhones'}),api({action:'getTeams'}),
       api({action:'getUnreturned'})
     ]);
-    if(rec.success){cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords();document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();}
-    if(ag.success) {cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents();populateTeamDropdowns();}
-    if(ph.success&&Date.now()>writeLockedUntil){cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones();}
-    if(tm.success) {cacheTeams=tm.teams;populateTeamDropdowns();}
-    updateUnreturnedBadge(un);
+
+    let dataChanged=false;
+
+    if(rec.success){
+      document.getElementById('recordsUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+      if(changed('records',rec.records)){
+        dataChanged=true;cacheRecords=rec.records;state.records.data=[...rec.records].reverse();filterRecords(false);
+      }
+    }
+    if(ag.success&&changed('agents',ag.agents)){
+      dataChanged=true;cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);populateTeamDropdowns();
+    }
+    if(ph.success&&Date.now()>writeLockedUntil&&changed('phones',ph.phones)){
+      dataChanged=true;cachePhones=ph.phones;state.phones.data=ph.phones;filterPhones(false);
+    }
+    if(tm.success&&changed('teams',tm.teams)){
+      cacheTeams=tm.teams;populateTeamDropdowns();renderTeamsTable();
+    }
+    if(un.success){
+      updateUnreturnedBadge(un);
+      if(changed('unreturned',un.unreturned)&&document.getElementById('page-unreturned').classList.contains('active')){
+        renderUnreturnedTable(un);
+        document.getElementById('unreturnedUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
+      }
+    }
+
     updatePendingBadge();
-    if(document.getElementById('page-pending').classList.contains('active')) loadPending();
-    renderDashboard();
-    if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
+    // loadPending() does its own fetch+merge and preserves any row the
+    // admin is actively verifying, so it's always safe to call. Awaited so
+    // a fast second tick can't overlap it and race the DOM.
+    if(document.getElementById('page-pending').classList.contains('active')) await loadPending();
+
+    if(dataChanged){
+      renderDashboard();
+      if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
+    }
     setLiveLabel();
   }catch{}
 }
@@ -1208,12 +1255,27 @@ function populateTeamDropdowns(){
   });
 }
 
+// Is the admin's keyboard/click focus currently inside this table? Used to
+// skip a background-triggered re-render rather than yank focus away —
+// the render is simply retried on the next tick once they click elsewhere.
+function tableBeingEdited(tbodyId){
+  const el=document.activeElement;
+  const tbody=document.getElementById(tbodyId);
+  return !!(el&&tbody&&tbody.contains(el));
+}
+
 // ── RECORDS ───────────────────────────────────────────
-function filterRecords(){
+// resetPage: true for an explicit search/filter action (jump to page 1 to
+// show results), false for a silent background refresh (keep whatever
+// page the admin is currently looking at).
+function filterRecords(resetPage=true){
+  if(!resetPage&&tableBeingEdited('recordsBody'))return;
   const q=(document.getElementById('recordSearch')?.value||'').toLowerCase();
   const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
   state.records.filtered=q?state.records.data.filter(r=>(r['Agent Name']||'').toLowerCase().includes(q)||(r['Phone Unit']||'').toString().toLowerCase().includes(q)||(r['Serial No.']||'').toLowerCase().includes(q)||(r['Purpose/Notes']||'').toLowerCase().includes(q)):[...state.records.data];
-  state.records.page=1;renderRecordsTable(agTeam);
+  if(resetPage)state.records.page=1;
+  else state.records.page=Math.min(state.records.page,Math.max(1,Math.ceil(state.records.filtered.length/PAGE_SIZE)));
+  renderRecordsTable(agTeam);
 }
 function renderRecordsTable(agTeam){
   if(!agTeam){agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});}
@@ -1316,10 +1378,13 @@ async function bulkImport(){
 }
 
 // ── AGENTS ────────────────────────────────────────────
-function filterAgents(){
+function filterAgents(resetPage=true){
+  if(!resetPage&&tableBeingEdited('agentTableBody'))return;
   const q=(document.getElementById('agentSearch')?.value||'').toLowerCase();
   state.agents.filtered=q?state.agents.data.filter(a=>a.name.toLowerCase().includes(q)||a.team.toLowerCase().includes(q)):[...state.agents.data];
-  state.agents.page=1;renderAgentTable();
+  if(resetPage)state.agents.page=1;
+  else state.agents.page=Math.min(state.agents.page,Math.max(1,Math.ceil(state.agents.filtered.length/PAGE_SIZE)));
+  renderAgentTable();
 }
 function renderAgentTable(){
   const {filtered,page}=state.agents;
@@ -1400,10 +1465,13 @@ async function removeTeam(name){
 }
 
 // ── PHONES ────────────────────────────────────────────
-function filterPhones(){
+function filterPhones(resetPage=true){
+  if(!resetPage&&tableBeingEdited('phoneTableBody'))return;
   const q=(document.getElementById('phoneSearch')?.value||'').toLowerCase();
   state.phones.filtered=q?state.phones.data.filter(p=>p.unitNo.toLowerCase().includes(q)||p.serialNo.toLowerCase().includes(q)):[...state.phones.data];
-  state.phones.page=1;renderPhoneTable();
+  if(resetPage)state.phones.page=1;
+  else state.phones.page=Math.min(state.phones.page,Math.max(1,Math.ceil(state.phones.filtered.length/PAGE_SIZE)));
+  renderPhoneTable();
 }
 function phoneStatusTag(p){
   if(p.available) return {cls:'tag-verified',label:'✅ Available'};
@@ -1413,6 +1481,13 @@ function phoneStatusTag(p){
   if(p.unavailableReason) return {cls:'tag-flagged',label:'🚫 Unavailable — '+p.unavailableReason};
   return {cls:'tag-flagged',label:'🔴 Borrowed'};
 }
+// True while a unit's action cell has an unsaved Hold-reason form open, or
+// is mid-save — either way we must not overwrite it out from under the admin.
+function phoneRowProtected(uid){
+  if(document.getElementById('phreason-'+uid))return true;
+  const cell=document.getElementById('phaction-'+uid);
+  return !!(cell&&cell.textContent.trim()==='Saving…');
+}
 function renderPhoneTable(){
   const {filtered,page}=state.phones;
   const tbody=document.getElementById('phoneTableBody');
@@ -1420,9 +1495,15 @@ function renderPhoneTable(){
   const start=(page-1)*PAGE_SIZE,slice=filtered.slice(start,start+PAGE_SIZE);
   document.getElementById('phoneCount').textContent=total?`${total} unit${total!==1?'s':''}`:'' ;
   if(!total){tbody.innerHTML='<tr class="empty-row"><td colspan="4">No units found.</td></tr>';document.getElementById('phonePagination').innerHTML='';return;}
-  tbody.innerHTML=slice.map(p=>{
-    const tag=phoneStatusTag(p);
+
+  const existing={};
+  tbody.querySelectorAll('tr[id^="phrow-"]').forEach(tr=>{existing[tr.id.slice(7)]=tr;});
+
+  const frag=document.createDocumentFragment();
+  slice.forEach(p=>{
     const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
+    if(existing[uid]&&phoneRowProtected(uid)){frag.appendChild(existing[uid]);return;}
+    const tag=phoneStatusTag(p);
     let action;
     if(p.available){
       action=`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
@@ -1436,12 +1517,16 @@ function renderPhoneTable(){
     }else{
       action=`<span style="color:var(--muted);font-size:.74rem">Currently borrowed</span>`;
     }
-    return `<tr id="phrow-${uid}">
+    const tr=document.createElement('tr');
+    tr.id='phrow-'+uid;
+    tr.innerHTML=`
       <td>Unit ${p.unitNo}</td><td>${p.serialNo}</td>
       <td><span class="tag ${tag.cls}" id="phtag-${uid}">${tag.label}</span></td>
-      <td id="phaction-${uid}">${action}</td>
-    </tr>`;
-  }).join('');
+      <td id="phaction-${uid}">${action}</td>`;
+    frag.appendChild(tr);
+  });
+  tbody.innerHTML='';
+  tbody.appendChild(frag);
   renderPagination('phonePagination',page,pages,p=>{state.phones.page=p;renderPhoneTable();});
 }
 function showAdminHold(unitNo,uid){
@@ -1529,23 +1614,58 @@ function updatePendingBadge(){
   const b=document.getElementById('pendingBadge');
   b.style.display=c>0?'inline-block':'none';b.textContent=c;
 }
+// True while a pending row has unsaved admin input on it: call-count
+// numbers the admin has started typing, focus currently on one of its
+// inputs, an open Hold-reason form, or a save in flight. Any of these
+// means "don't touch this row" — it's preserved as its live DOM node so
+// nothing the admin already did has to be redone.
+function pendingRowProtected(uid){
+  if(document.getElementById('preason-'+uid))return true;
+  const dec=document.getElementById('pdecision-'+uid);
+  if(dec&&dec.textContent.trim()==='Saving…')return true;
+  const ci=document.getElementById('pc-'+uid),si=document.getElementById('ps-'+uid);
+  if(ci&&ci.value!=='')return true;
+  if(si&&si.value!=='')return true;
+  const active=document.activeElement;
+  if(active&&(active.id==='pc-'+uid||active.id==='ps-'+uid))return true;
+  return false;
+}
 async function loadPending(){
   const tbody=document.getElementById('pendingBody');
   try{
     const [phRes,recRes]=await Promise.all([api({action:'getPhones'}),api({action:'getRecords'})]);
     document.getElementById('pendingUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
-    if(!phRes.success){tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';return;}
+    if(!phRes.success){if(!tbody.querySelector('tr[id^="prow-"]'))tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';return;}
     cachePhones=phRes.phones;updatePendingBadge();
     const recordsById={};
     if(recRes.success)recRes.records.forEach(r=>{recordsById[r['Record ID']]=r;});
     const pending=cachePhones.filter(p=>p.pendingReturn&&p.pendingRecordId);
-    if(!pending.length){tbody.innerHTML='<tr class="empty-row"><td colspan="10">✅ Nothing awaiting verification.</td></tr>';return;}
-    tbody.innerHTML=pending.map(p=>{
+
+    if(!pending.length){
+      // Only clear the table if nothing on it is mid-edit — a unit could
+      // have been resolved by another admin while this one is still
+      // filling in a (now-orphaned) row; let them finish before it vanishes.
+      const stillEditing=[...tbody.querySelectorAll('tr[id^="prow-"]')].some(tr=>pendingRowProtected(tr.id.slice(5)));
+      if(!stillEditing)tbody.innerHTML='<tr class="empty-row"><td colspan="10">✅ Nothing awaiting verification.</td></tr>';
+      return;
+    }
+
+    const existing={};
+    tbody.querySelectorAll('tr[id^="prow-"]').forEach(tr=>{existing[tr.id.slice(5)]=tr;});
+
+    const frag=document.createDocumentFragment();
+    pending.forEach(p=>{
+      const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
+      if(existing[uid]&&pendingRowProtected(uid)){
+        frag.appendChild(existing[uid]); // keep the admin's in-progress row exactly as they left it
+        return;
+      }
       const r=recordsById[p.pendingRecordId]||{};
       const agentCalls=r['Clients Called (Agent)']!==undefined&&r['Clients Called (Agent)']!==''?r['Clients Called (Agent)']:'—';
       const agentSucc=r['Successful Calls (Agent)']!==undefined&&r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—';
-      const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
-      return `<tr id="prow-${uid}">
+      const tr=document.createElement('tr');
+      tr.id='prow-'+uid;
+      tr.innerHTML=`
         <td>${p.borrowedBy||'—'}</td><td>Unit ${p.unitNo}</td>
         <td>${fmt(p.borrowTime)}</td><td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
         <td style="font-weight:700;color:var(--primary)">${agentCalls}</td>
@@ -1559,10 +1679,12 @@ async function loadPending(){
             <button class="btn btn-verify btn-sm" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
             <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button">🚫 Hold</button>
           </div>
-        </td>
-      </tr>`;
-    }).join('');
-  }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';}
+        </td>`;
+      frag.appendChild(tr);
+    });
+    tbody.innerHTML='';
+    tbody.appendChild(frag);
+  }catch{if(!tbody.querySelector('tr[id^="prow-"]'))tbody.innerHTML='<tr class="empty-row"><td colspan="10">Failed to load.</td></tr>';}
 }
 function readPendingCounts(uid){
   const ci=document.getElementById('pc-'+uid),si=document.getElementById('ps-'+uid);
@@ -1640,20 +1762,28 @@ function updateUnreturnedBadge(data){
   const oc=data.unreturned.filter(r=>r.status==='Overdue').length;
   badge.style.display=oc>0?'inline-block':'none';badge.textContent=oc;
 }
-async function loadUnreturned(){
+// No editable fields on this page, so it's always safe to fully redraw —
+// used both by explicit nav and by the background refresh tick.
+function renderUnreturnedTable(data){
   const tbody=document.getElementById('unreturnedBody');
   const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
+  if(!data||!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="7">✅ All units have been confirmed back.</td></tr>';return;}
+  tbody.innerHTML=data.unreturned.map(r=>`<tr>
+    <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
+    <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
+    <td>${r.pendingReturn?'<span class="tag tag-unverified">📥 Yes — pending</span>':'<span style="color:var(--muted);font-size:.78rem">No</span>'}</td>
+    <td>${r.status==='Overdue'?`<span class="tag tag-overdue">⚠️ Overdue by ${fmtOverdueDuration(Date.now()-new Date(r.borrowTime)-OVERDUE_HOURS*3600000)}</span>`:'<span class="tag tag-today">🟡 Active</span>'}</td>
+  </tr>`).join('');
+}
+async function loadUnreturned(){
+  const tbody=document.getElementById('unreturnedBody');
   try{
     const data=await api({action:'getUnreturned'});
     document.getElementById('unreturnedUpdated').textContent='Updated: '+new Date().toLocaleTimeString();
     updateUnreturnedBadge(data);
-    if(!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="7">✅ All units have been confirmed back.</td></tr>';return;}
-    tbody.innerHTML=data.unreturned.map(r=>`<tr>
-      <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
-      <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
-      <td>${r.pendingReturn?'<span class="tag tag-unverified">📥 Yes — pending</span>':'<span style="color:var(--muted);font-size:.78rem">No</span>'}</td>
-      <td>${r.status==='Overdue'?`<span class="tag tag-overdue">⚠️ Overdue by ${fmtOverdueDuration(Date.now()-new Date(r.borrowTime)-OVERDUE_HOURS*3600000)}</span>`:'<span class="tag tag-today">🟡 Active</span>'}</td>
-    </tr>`).join('');
+    changed('unreturned',data.unreturned||[]);
+    if(!data.success){tbody.innerHTML='<tr class="empty-row"><td colspan="7">Failed to load.</td></tr>';return;}
+    renderUnreturnedTable(data);
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="7">Failed to load.</td></tr>';}
 }
 
