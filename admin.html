@@ -395,7 +395,6 @@
             <p>Overview of phone borrowing activity.</p>
             <p class="print-only" id="printMeta"></p>
           </div>
-          <button class="btn-print no-print" onclick="printDashboard()" type="button">Print / Save PDF</button>
         </div>
 
         <!-- FILTER BAR -->
@@ -423,12 +422,13 @@
         <!-- INDIVIDUAL AGENT SEARCH -->
         <div class="card no-print">
           <div class="card-title">Individual Agent Performance Search</div>
-          <div class="agent-search-bar">
+          <div class="agent-search-bar" style="margin-bottom:0">
             <div class="agent-search-wrap">
               <input type="text" id="agentDashSearch" placeholder="Search agent name…" oninput="filterAgentDashSearch()" autocorrect="off"/>
             </div>
             <div id="agentDashSuggestions" style="position:absolute;margin-top:40px;background:var(--card);border:1.5px solid var(--primary);border-radius:10px;max-height:180px;overflow-y:auto;z-index:100;min-width:250px;box-shadow:0 8px 24px rgba(var(--primary-rgb),.18);display:none"></div>
             <button class="btn btn-primary btn-sm" onclick="clearAgentDash()" type="button" id="clearAgentBtn" style="display:none">Clear</button>
+            <button class="btn-print" onclick="printDashboard()" type="button" style="margin-left:auto">Print / Save PDF</button>
           </div>
         </div>
 
