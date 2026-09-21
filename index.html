@@ -580,7 +580,6 @@
       <header>
         <div>
           <div class="logo-line">
-            <div class="logo-icon">📱</div>
             <div>
               <h1>Phone Borrowing System</h1>
               <p class="subtitle">Agent Portal</p>
@@ -943,9 +942,7 @@
         const box = document.getElementById("authBox");
         if (currentAgent) {
           box.innerHTML =
-            '<span class="agent-pill">👤 ' +
-            escapeHtml(currentAgent.name) +
-            '</span><button class="btn-link" onclick="logout()">⎋ Logout</button>';
+            '<button class="btn-link" onclick="logout()">⎋ Logout</button>';
         } else {
           box.innerHTML =
             '<button class="btn-link" onclick="openLogin()">Login</button>';
@@ -1332,11 +1329,13 @@
           });
           if (res.success) {
             toast(res.message || "Phone returned successfully!", "success");
-            currentAgent.activeBorrowUnit = null;
-            currentAgent.activeRecordId = null;
-            activeRecord = null;
+            // Don't clear currentAgent.activeBorrowUnit here — the agent
+            // stays locked on this same unit until an admin verifies the
+            // return. Just refresh the phone list (which will now carry
+            // pendingReturn: true for this unit) and re-render right away,
+            // instead of waiting on the next background poll to notice.
             await loadPhones();
-            onAuthChanged();
+            renderHeader();
             showScreen("grid");
           } else {
             toast(res.message || "Could not return this phone.", "error");
