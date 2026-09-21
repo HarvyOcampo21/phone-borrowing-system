@@ -749,6 +749,7 @@ let chartAgentTrend=null, chartAgentVerify=null;
 let dismissedNotifs=new Set(); // populated from the server; see loadAll()/refreshAll()
 let currentAdminUsername='';
 let lastNotifsByKey={};
+let pendingUnreturnedHighlight=null;
 function sanitizeId(s){return s.toString().replace(/[^a-zA-Z0-9]/g,'_');}
 
 function buildNotifications(){
@@ -774,6 +775,25 @@ function buildNotifications(){
         unitNo:p.unitNo,
       });
     }
+  });
+  // Overdue units: still out with the agent (deployed, not returned) past the
+  // OVERDUE_HOURS limit. Units the agent has already tapped Return on are
+  // excluded — they're covered by the "submitted a return" notification above.
+  // Time-based, so it's re-evaluated on every refresh tick (every 30s) rather
+  // than needing the underlying data to change. The key includes borrowTime, so
+  // a later overdue loan of the same unit gets a fresh notification even if an
+  // earlier one was dismissed.
+  cachePhones.forEach(p=>{
+    if(p.available!==false||!p.borrowTime||p.physicallyReturned||p.pendingReturn)return;
+    const dueMs=new Date(p.borrowTime).getTime()+OVERDUE_HOURS*3600000;
+    if(!(Date.now()>=dueMs))return;
+    list.push({
+      key:`overdue:${p.unitNo}:${p.borrowTime}`,
+      type:'overdue', icon:'⏰',
+      title:`${p.borrowedBy||'An agent'} hasn't returned Unit ${p.unitNo} — overdue by ${fmtOverdueDuration(Date.now()-dueMs)}`,
+      time:new Date(dueMs).toISOString(),   // when it became overdue
+      unitNo:p.unitNo,
+    });
   });
   // Drop dismissed keys that no longer correspond to any live notification —
   // clean up the shared collection so it doesn't grow forever. Fire-and-forget:
@@ -862,6 +882,9 @@ function handleNotifClick(key){
   }else if(n.type==='return'){
     navigateToPage('pending');
     setTimeout(()=>highlightRow('prow-'+sanitizeId(n.unitNo)),200);
+  }else if(n.type==='overdue'){
+    pendingUnreturnedHighlight='urow-'+sanitizeId(n.unitNo); // consumed once the table has rendered
+    navigateToPage('unreturned');
   }
 }
 
@@ -2052,12 +2075,13 @@ function renderUnreturnedTable(data){
   const tbody=document.getElementById('unreturnedBody');
   const agTeam={};cacheAgents.forEach(a=>{agTeam[a.name]=a.team||'';});
   if(!data||!data.success||!data.unreturned.length){tbody.innerHTML='<tr class="empty-row"><td colspan="7">✅ All units have been confirmed back.</td></tr>';return;}
-  tbody.innerHTML=data.unreturned.map(r=>`<tr>
+  tbody.innerHTML=data.unreturned.map(r=>`<tr id="urow-${sanitizeId(r.unitNo)}">
     <td>${r.agentName}</td><td style="font-size:.74rem;color:var(--muted)">${agTeam[r.agentName]||'—'}</td>
     <td>Unit ${r.unitNo}</td><td>${r.serialNo}</td><td>${fmt(r.borrowTime)}</td>
     <td>${r.pendingReturn?'<span class="tag tag-unverified">📥 Yes — pending</span>':'<span style="color:var(--muted);font-size:.78rem">No</span>'}</td>
     <td>${r.status==='Overdue'?`<span class="tag tag-overdue">⚠️ Overdue by ${fmtOverdueDuration(Date.now()-new Date(r.borrowTime)-OVERDUE_HOURS*3600000)}</span>`:'<span class="tag tag-today">🟡 Active</span>'}</td>
   </tr>`).join('');
+  if(pendingUnreturnedHighlight){const id=pendingUnreturnedHighlight;pendingUnreturnedHighlight=null;setTimeout(()=>highlightRow(id),50);}
 }
 async function loadUnreturned(){
   const tbody=document.getElementById('unreturnedBody');
