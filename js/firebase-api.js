@@ -14,7 +14,7 @@
 //                            borrowTime, returnTime, notes,
 //                            clientsCalledAgent, successfulCallsAgent,
 //                            clientsCalledAdmin, successfulCallsAdmin,
-//                            verificationStatus }
+//                            verificationStatus, wasOverdue }
 //   admins/{slug(username)} { username, password }
 //
 // SECURITY NOTE: this talks to Firestore directly from the browser
@@ -63,6 +63,7 @@ function recordToHeaderObj(v) {
     "Clients Called (Admin)": v.clientsCalledAdmin ?? "",
     "Successful Calls (Admin)": v.successfulCallsAdmin ?? "",
     "Verification Status": v.verificationStatus || "Unverified",
+    "Overdue Return": v.wasOverdue === true,
   };
 }
 
@@ -228,6 +229,7 @@ async function borrowPhone(data) {
         clientsCalledAdmin: null,
         successfulCallsAdmin: null,
         verificationStatus: "Unverified",
+        wasOverdue: false,
       });
       tx.update(phoneRef, {
         available: false,
@@ -267,11 +269,20 @@ async function returnPhone(data) {
       const recordRef = doc(db, "records", a.activeRecordId);
       const recordSnap = await tx.get(recordRef);
       if (!recordSnap.exists()) throw new Error("No active borrow record found.");
+      const r = recordSnap.data();
+
+      // Was this unit held past the overdue threshold before the agent
+      // tapped Return? Recorded permanently here so it still shows up
+      // in this agent's history/performance after the loan is resolved
+      // and the live "Unreturned Units" view no longer has it.
+      const borrowMs = r.borrowTime ? r.borrowTime.toMillis() : null;
+      const wasOverdue = borrowMs != null && (Date.now() - borrowMs) >= OVERDUE_HOURS * 3600000;
 
       tx.update(recordRef, {
         returnTime: Timestamp.now(),
         clientsCalledAgent: data.clientsCalled,
         successfulCallsAgent: data.successfulCalls,
+        wasOverdue,
       });
       // available/borrowedBy/borrowTime, and the agent's
       // activeBorrowUnit/activeRecordId, are all left as-is on purpose —

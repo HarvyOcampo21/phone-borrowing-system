@@ -457,8 +457,8 @@
             <div class="card-title">🏆 Agent Performance</div>
             <div class="table-wrap">
               <table>
-                <thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Borrows</th><th>Total Calls</th><th>Successful</th><th>Rate</th><th>Flagged</th></tr></thead>
-                <tbody id="perfBody"><tr class="empty-row"><td colspan="8">Loading…</td></tr></tbody>
+                <thead><tr><th>#</th><th>Agent</th><th>Team</th><th>Borrows</th><th>Total Calls</th><th>Successful</th><th>Rate</th><th>Flagged</th><th>Overdue</th></tr></thead>
+                <tbody id="perfBody"><tr class="empty-row"><td colspan="9">Loading…</td></tr></tbody>
               </table>
             </div>
           </div>
@@ -870,6 +870,18 @@ function filterRecordsByPeriodAndTeam(agentNameFilter){
   });
 }
 
+// Keep in sync with OVERDUE_HOURS in firebase-api.js / index.html.
+const OVERDUE_HOURS=2;
+// Prefer the value firebase-api.js stamped onto the record at return
+// time; fall back to computing it from the timestamps for older records
+// that predate this field, so history isn't blank for past returns.
+function isOverdueReturn(r){
+  if(r['Overdue Return']===true)return true;
+  if(!r['Return Time']||!r['Borrow Time'])return false;
+  const hrs=(new Date(r['Return Time'])-new Date(r['Borrow Time']))/3600000;
+  return hrs>=OVERDUE_HOURS;
+}
+
 // Once admin has verified/flagged a record, the ADMIN's counted calls are
 // the source of truth (not the agent's self-reported numbers) — records
 // still sitting at "Unverified" have no admin count yet, so those fall
@@ -894,7 +906,8 @@ function computeStats(filtered){
   const flaggedCount   =returned.filter(r=>r['Verification Status']==='Flagged').length;
   const verifiedCount  =returned.filter(r=>r['Verification Status']==='Verified').length;
   const unverifiedCount=returned.filter(r=>(r['Verification Status']||'Unverified')==='Unverified').length;
-  return {totalBorrows,totalCalls,totalSuccessful,successRate,flaggedCount,verifiedCount,unverifiedCount};
+  const overdueCount   =returned.filter(isOverdueReturn).length;
+  return {totalBorrows,totalCalls,totalSuccessful,successRate,flaggedCount,verifiedCount,unverifiedCount,overdueCount};
 }
 
 function buildTrendData(filtered){
@@ -935,9 +948,13 @@ function renderDashboard(){
   const agStats={};
   filtered.forEach(r=>{
     const name=(r['Agent Name']||'Unknown').toString().trim();
-    if(!agStats[name])agStats[name]={name,team:agTeam[name]||'—',borrows:0,calls:0,successful:0,flagged:0};
+    if(!agStats[name])agStats[name]={name,team:agTeam[name]||'—',borrows:0,calls:0,successful:0,flagged:0,overdue:0};
     agStats[name].borrows++;
-    if(r['Return Time']){agStats[name].calls+=effCalls(r);agStats[name].successful+=effSuccessful(r);if(r['Verification Status']==='Flagged')agStats[name].flagged++;}
+    if(r['Return Time']){
+      agStats[name].calls+=effCalls(r);agStats[name].successful+=effSuccessful(r);
+      if(r['Verification Status']==='Flagged')agStats[name].flagged++;
+      if(isOverdueReturn(r))agStats[name].overdue++;
+    }
   });
   const agentPerf=Object.values(agStats).sort((a,b)=>b.calls-a.calls);
   const trend=buildTrendData(filtered);
@@ -990,6 +1007,17 @@ function viewAgentPerformance(name){
   setTimeout(()=>selectAgentDash(name),100);
 }
 
+// When a record is flagged, show the agent's originally-reported number
+// struck through next to the admin's verified number, so a false report
+// is visible at a glance rather than silently replaced by the true one.
+function callCellHtml(agentVal,adminVal,effVal,flagged){
+  if(agentVal===''||agentVal==null)return '—';
+  if(flagged&&adminVal!==''&&adminVal!=null&&parseInt(adminVal)!==parseInt(agentVal)){
+    return `<span style="text-decoration:line-through;color:var(--muted)">${agentVal}</span> <span style="color:var(--red);font-weight:700">${adminVal}</span>`;
+  }
+  return effVal;
+}
+
 function renderAgentDashboard(name){
   const agent=cacheAgents.find(a=>a.name===name)||{name,team:''};
   document.getElementById('agentDashName').textContent='👤 '+name;
@@ -1006,6 +1034,7 @@ function renderAgentDashboard(name){
     <div class="stat-card"><div class="stat-icon">📞</div><div class="stat-label">Total Calls</div><div class="stat-value">${stats.totalCalls}</div></div>
     <div class="stat-card green"><div class="stat-icon">🎯</div><div class="stat-label">Success Rate</div><div class="stat-value">${rate}%</div><div class="stat-sub">${stats.totalSuccessful} successful</div></div>
     <div class="stat-card red"><div class="stat-icon">🚩</div><div class="stat-label">Flagged</div><div class="stat-value">${stats.flaggedCount}</div></div>
+    <div class="stat-card red"><div class="stat-icon">⏰</div><div class="stat-label">Overdue Returns</div><div class="stat-value">${stats.overdueCount}</div></div>
     <div class="stat-card green"><div class="stat-icon">✅</div><div class="stat-label">Verified</div><div class="stat-value">${stats.verifiedCount}</div></div>
     <div class="stat-card"><div class="stat-icon">⏳</div><div class="stat-label">Unverified</div><div class="stat-value">${stats.unverifiedCount}</div></div>
   `;
@@ -1021,13 +1050,14 @@ function renderAgentDashboard(name){
   if(!recent.length){tbody.innerHTML='<tr class="empty-row"><td colspan="6">No records in this period.</td></tr>';return;}
   tbody.innerHTML=recent.map(r=>{
     const isActive=!r['Return Time'];const status=r['Verification Status']||'Unverified';
+    const overdue=isOverdueReturn(r);
     return `<tr>
       <td>Unit ${r['Phone Unit']||'—'}</td>
       <td>${fmt(r['Borrow Time'])}</td>
       <td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
-      <td>${r['Return Time']?effCalls(r):'—'}</td>
-      <td>${r['Return Time']?effSuccessful(r):'—'}</td>
-      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+      <td>${r['Return Time']?callCellHtml(r['Clients Called (Agent)'],r['Clients Called (Admin)'],effCalls(r),status==='Flagged'):'—'}</td>
+      <td>${r['Return Time']?callCellHtml(r['Successful Calls (Agent)'],r['Successful Calls (Admin)'],effSuccessful(r),status==='Flagged'):'—'}</td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${overdue?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
     </tr>`;
   }).join('');
 }
@@ -1124,7 +1154,7 @@ function renderTrendChartFn(trend,canvasId,emptyId,instRefStr,instKey){
 
 function renderPerfTable(perf){
   const tbody=document.getElementById('perfBody');
-  if(!perf.length){tbody.innerHTML='<tr class="empty-row"><td colspan="8">No data for this period.</td></tr>';return;}
+  if(!perf.length){tbody.innerHTML='<tr class="empty-row"><td colspan="9">No data for this period.</td></tr>';return;}
   tbody.innerHTML=perf.map((a,i)=>{
     const rate=a.calls>0?Math.round(a.successful/a.calls*100):0;
     const rc=rate>=70?'var(--green)':rate>=40?'var(--yellow)':'var(--red)';
@@ -1135,6 +1165,7 @@ function renderPerfTable(perf){
       <td>${a.borrows}</td><td>${a.calls}</td><td>${a.successful}</td>
       <td style="font-weight:700;color:${rc}">${a.calls>0?rate+'%':'—'}</td>
       <td>${a.flagged>0?`<span class="tag tag-flagged">${a.flagged}</span>`:'0'}</td>
+      <td>${a.overdue>0?`<span class="tag tag-flagged">⏰ ${a.overdue}</span>`:'0'}</td>
     </tr>`;
   }).join('');
 }
@@ -1183,7 +1214,7 @@ function renderRecordsTable(agTeam){
       <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
       <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
       <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
-      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+      <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${isOverdueReturn(r)?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
     </tr>`;
   }).join('');
   renderPagination('recordsPagination',page,pages,p=>{state.records.page=p;renderRecordsTable();});
@@ -1629,7 +1660,7 @@ async function loadHistory(){
         <td>${r['Clients Called (Admin)']!==''?r['Clients Called (Admin)']:'—'}</td>
         <td>${r['Successful Calls (Agent)']!==''?r['Successful Calls (Agent)']:'—'}</td>
         <td>${r['Successful Calls (Admin)']!==''?r['Successful Calls (Admin)']:'—'}</td>
-        <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span></td>
+        <td><span class="tag ${isActive?'tag-active':tagCls(status)}">${isActive?'🟡 Active':status}</span>${isOverdueReturn(r)?' <span class="tag tag-flagged">⏰ Overdue</span>':''}</td>
       </tr>`;
     }).join('');
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="11">Failed to load.</td></tr>';}
