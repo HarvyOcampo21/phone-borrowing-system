@@ -733,6 +733,11 @@ const MON_DEFAULTS = { minCalls: 10, minSuccessRate: 50, periodDays: 7, overdueT
 const CLAR_STATUSES = ["Pending Clarification", "Clarification Received", "Verified", "Rejected", "Restriction Approved", "Restriction Cancelled"];
 const CLAR_OPEN = ["Pending Clarification", "Clarification Received", "Verified", "Restriction Approved"];
 
+// Structured violation reason. One borrowing session (sourceRecordId) can carry one flag PER reason.
+const FLAG_REASONS = { CALL_LOG_VERIFICATION: "Call Log / Verification", OVERDUE_RETURN: "Overdue Return" };
+const REASON_OF_TYPE = { overdue: "OVERDUE_RETURN", mismatch: "CALL_LOG_VERIFICATION", calls: "CALL_LOG_VERIFICATION", rate: "CALL_LOG_VERIFICATION" };
+const reasonOf = (f) => f.flagReason || REASON_OF_TYPE[f.type] || null;
+
 const guard = (fn) => async (d) => {
   try { return await fn(d || {}); } catch (e) { return { success: false, message: e.message }; }
 };
@@ -793,21 +798,33 @@ const syncFlags = guard(async (d) => {
   const list = d.flags || [];
   if (list.some((f) => f.source === "HISTORICAL")) await assertEnforcer(d.admin); // backfill is an admin action
   let created = 0, skipped = 0;
+  // A session may have several flags, but only one per reason: sourceRecordId + flagReason is unique.
+  const seen = new Set((await listAll("flags")).filter((x) => x.sourceRecordId || x.recordId).map((x) => (x.sourceRecordId || x.recordId) + "|" + reasonOf(x)));
   for (const f of list) {
     const ref = doc(db, "flags", f.id), hist = f.source === "HISTORICAL";
+    const fReason = f.flagReason || REASON_OF_TYPE[f.type] || null, ukey = f.recordId ? f.recordId + "|" + fReason : null;
+    if (ukey && seen.has(ukey)) { const ex = await getDoc(ref); if (!ex.exists()) { skipped++; continue; } }
     await runTransaction(db, async (tx) => {
       const cref = doc(db, "counters", hist ? "histFlags" : "flags");
       const fs = await tx.get(ref), cs = await tx.get(cref);
       if (fs.exists()) { skipped++; return; } // never overwrite a flag that already exists
       const flagNo = (cs.exists() ? cs.data().n : 0) + 1;
       tx.set(cref, { n: flagNo });
-      tx.set(ref, { ...f, flagNo, flagRef: hist ? "HIST-" + String(flagNo).padStart(3, "0") : String(flagNo).padStart(4, "0"),
+      if (ukey) seen.add(ukey);
+      tx.set(ref, { ...f, flagReason: fReason, flagNo, flagRef: hist ? "HIST-" + String(flagNo).padStart(3, "0") : String(flagNo).padStart(4, "0"),
         source: f.source || "AUTOMATIC", sourceRecordId: f.recordId || null,
         status: "pending", createdAt: Timestamp.now(), reviewedBy: null, reviewedAt: null, offenseLevel: null, reason: "", notes: "" });
       created++;
     });
   }
   return { success: true, created, skipped };
+});
+
+// Adds the structured flagReason to flags created before it existed. Additive; touches nothing else.
+const stampFlagReasons = guard(async () => {
+  let updated = 0;
+  for (const f of await listAll("flags")) if (!f.flagReason && REASON_OF_TYPE[f.type]) { await updateDoc(doc(db, "flags", f.id), { flagReason: REASON_OF_TYPE[f.type] }); updated++; }
+  return { success: true, updated };
 });
 
 const logBackfill = guard(async (d) => {
@@ -825,7 +842,7 @@ const reviewFlag = guard(async (d) => {
   const dismiss = d.decision === "dismiss";
   if (dismiss) need(d.reason, "Add a reason for dismissing this flag.");
   await updateDoc(ref, { status: dismiss ? "dismissed" : "confirmed", reviewedBy: d.admin || "", reviewedAt: Timestamp.now(), reason: d.reason || "", notes: d.notes || "" });
-  await writeAudit({ agentName: f.agentName, violationType: f.type, flagId: f.id, decision: dismiss ? "Flag dismissed" : "Flag confirmed", admin: d.admin, reason: d.reason, notes: d.notes });
+  await writeAudit({ agentName: f.agentName, violationType: f.type, flagReason: reasonOf(f), flagId: f.id, decision: dismiss ? "Flag dismissed" : "Flag confirmed", admin: d.admin, reason: d.reason, notes: d.notes });
   return { success: true, message: dismiss ? "Flag dismissed — no offense." : "Flag confirmed. Impose an offense if it's warranted." };
 });
 
@@ -848,7 +865,8 @@ const incidentLabel = (fd) => (fd.data && fd.data.Unit ? "Unit " + fd.data.Unit 
 
 const imposeOffense = guard(async (d) => {
   await assertEnforcer(d.admin);
-  const reason = need(d.reason, "A reason is required to impose an offense.");
+  let reason = (d.reason || "").toString().trim(), flagReason = d.flagReason || null;   // reason text is optional; the structured flagReason is required
+  if (flagReason && !FLAG_REASONS[flagReason]) throw new Error("Unknown violation type.");
   const agentName = need(d.agentName, "Missing agent.");
   const aref = doc(db, "agents", slug(agentName));
   const fref = d.flagId ? doc(db, "flags", d.flagId) : null;
@@ -871,10 +889,15 @@ const imposeOffense = guard(async (d) => {
       if (fd.status === "dismissed") throw new Error("This flag was dismissed.");
       if (fd.offenseLevel) throw new Error("This flag already has an offense. Use Reassign Offense to change it.");
       wasPending = fd.status === "pending";
-      tx.update(fref, { status: "confirmed", offenseLevel: level, offenseId: oid,
+      const fr = reasonOf(fd);
+      if (fr && flagReason && fr !== flagReason) throw new Error("This flag is " + FLAG_REASONS[fr] + ", not " + FLAG_REASONS[flagReason] + ". The offense reason must match the flag.");
+      flagReason = fr || flagReason;
+      tx.update(fref, { status: "confirmed", flagReason: flagReason || null, offenseLevel: level, offenseId: oid,
         ...(wasPending ? { reviewedBy: d.admin, reviewedAt: Timestamp.now() } : {}) });
     }
-    tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: prev,
+    if (!flagReason) throw new Error("Choose the violation type (Call Log / Verification or Overdue Return).");
+    if (!reason) reason = FLAG_REASONS[flagReason];
+    tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: prev, flagReason,
       flagId: d.flagId || null, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null,
       sourceRecordId: fd.sourceRecordId || fd.recordId || null,
       incidentAt: fd.occurredAt || fd.createdAt || null,   // WHEN THE INCIDENT HAPPENED (original event)
@@ -884,7 +907,7 @@ const imposeOffense = guard(async (d) => {
       override: level !== nextFree(taken), previousOffenseId: null });
     tx.update(aref, { offenseLevel: Math.max(prev, level) });
   });
-  const ev = { agentName, violationType: d.violationType || fd.type || "manual", flagId: d.flagId || null, flagRef: fd.flagRef || null,
+  const ev = { agentName, flagReason, violationType: d.violationType || fd.type || "manual", flagId: d.flagId || null, flagRef: fd.flagRef || null,
     incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: fref ? incidentLabel(fd) : "", offenseId: oid, admin: d.admin };
   if (wasPending) await writeAudit({ ...ev, decision: "Flag confirmed", reason, notes: d.notes });
   await writeAudit({ ...ev, decision: "Offense imposed", prevLevel: prev, newLevel: level, reason, notes: d.notes });
@@ -923,7 +946,7 @@ const reassignOffense = guard(async (d) => {
     if (a.data().restricted && newLevel < 3) throw new Error("This agent is restricted. Remove the restriction before lowering the offense level.");
     tx.update(doc(db, "offenses", cur.id), { status: "superseded", supersededAt: Timestamp.now(), supersededBy: d.admin,
       supersededReason: reason, supersededNotes: d.notes || "", replacedById: level ? oid : null, replacedByLevel: level });
-    if (level) tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: cur.level,
+    if (level) tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: cur.level, flagReason: reasonOf(fd),
       flagId: d.flagId, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null, sourceRecordId: fd.sourceRecordId || fd.recordId || null,
       incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: incidentLabel(fd),
       violationType: fd.type || "manual", flagDetail: fd.detail || "", flagData: fd.data || null, decision: "Offense reassigned",
@@ -931,7 +954,7 @@ const reassignOffense = guard(async (d) => {
     tx.update(fref, { offenseLevel: level || null, offenseId: level ? oid : null });
     tx.update(aref, { offenseLevel: newLevel });
   });
-  await writeAudit({ agentName, violationType: fd.type || "manual", flagId: d.flagId, flagRef: fd.flagRef || null,
+  await writeAudit({ agentName, violationType: fd.type || "manual", flagReason: reasonOf(fd), flagId: d.flagId, flagRef: fd.flagRef || null,
     incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: incidentLabel(fd), offenseId: level ? oid : cur.id, previousOffenseId: cur.id,
     decision: level ? "Offense reassigned" : "Offense withdrawn", admin: d.admin, prevLevel: cur.level, newLevel: level, reason, notes: d.notes });
   return { success: true, message: level ? "Offense reassigned: " + ORD_API[cur.level] + " → " + ORD_API[level] + "." : "Offense withdrawn from this flag." };
@@ -1054,6 +1077,7 @@ export async function api(payload) {
       case "getMonitoring": return await getMonitoring(payload);
       case "saveMonitorConfig": return await saveMonitorConfig(payload);
       case "syncFlags": return await syncFlags(payload);
+      case "stampFlagReasons": return await stampFlagReasons(payload);
       case "logBackfill": return await logBackfill(payload);
       case "reviewFlag": return await reviewFlag(payload);
       case "imposeOffense": return await imposeOffense(payload);
