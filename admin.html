@@ -782,6 +782,12 @@
           </details>
         </div>
         <div class="card">
+          <div class="inline-row" style="align-items:center"><div class="field"><div class="card-title" style="margin-bottom:6px">Historical flag backfill</div>
+            <div style="font-size:.76rem;color:var(--muted)">Turns violations already in the borrowing records into flags for review, dated from the original record. Never imposes an offense or restriction, and running it again skips flags that exist.</div></div>
+            <button class="btn btn-primary" id="btnBackfill" onclick="runBackfill()" type="button">Backfill Historical Flags</button></div>
+          <div id="monBackfill" style="margin-top:10px"></div>
+        </div>
+        <div class="card">
           <div class="filter-tabs" id="monTabs" style="margin-bottom:12px"></div>
           <div class="list-toolbar">
             <div class="search-wrap"><span class="search-icon">🔍</span><input type="text" id="monSearch" placeholder="Search agents…" oninput="renderMonitoring()"/></div>
@@ -961,7 +967,7 @@ function handleNotifClick(key){
   const n=lastNotifsByKey[key];
   closeNotifPanel();
   if(!n)return;
-  if(n.type==='mon'){navigateToPage('monitoring');setTimeout(()=>openMon(n.agentName),100);return;}
+  if(n.type==='mon'){navigateToPage('monitoring');if(n.agentName)setTimeout(()=>openMon(n.agentName),100);return;}
   if(n.type==='pin'){
     navigateToPage('agents');
     const search=document.getElementById('agentSearch');
@@ -2227,40 +2233,52 @@ const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&
 const fmtDay=t=>new Date(t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
 const MON_FILTERS=[['all','All Agents'],['none','No Flags'],['has','Has Flags'],['overdue','Overdue Flags'],['calls','Call Activity Flags'],['rate','Success Ratio Flags'],['o1','1st Offense'],['o2','2nd Offense'],['o3','3rd Offense'],['restricted','Restricted Agents']];
 const MON_TEST={all:()=>true,none:s=>!s.pAny,has:s=>s.pAny>0,overdue:s=>s.pOvd>0,calls:s=>s.pCalls>0,rate:s=>s.pRate>0,o1:s=>s.lvl===1,o2:s=>s.lvl===2,o3:s=>s.lvl===3,restricted:s=>s.restricted};
-const FLAG_LABEL={overdue:'Overdue',calls:'Low call count',rate:'Low success rate'};
+const FLAG_LABEL={overdue:'Overdue',mismatch:'Call count mismatch',calls:'Low call count',rate:'Low success rate'};
 
 // Detection: returns flags that don't exist yet. Ids are deterministic, so
 // this is safe to run on every refresh.
-function detectFlags(){
+let detectSkipped=0;
+// Detection. Normal mode (hist=false) only covers activity after `trackingStart` (source AUTOMATIC).
+// Backfill mode (hist=true) also reads records from before it and yields source HISTORICAL flags.
+// Read-only on borrowing records; ids are stable (ovd_/mis_<recordId>, calls_/rate_<agent>_<period>).
+function detectFlags(hist){
   const c=mon.config,have=new Set(mon.flags.map(f=>f.id)),out=[],now=Date.now();
   const start=c.trackingStart?new Date(c.trackingStart+'T00:00:00').getTime():0;
-  const add=f=>{if(!have.has(f.id)){have.add(f.id);out.push(f);}};
+  const iso=t=>new Date(t).toISOString();detectSkipped=0;
+  const add=f=>{if(have.has(f.id)){if(f.source==='HISTORICAL')detectSkipped++;return;}have.add(f.id);out.push(f);};
   cacheRecords.forEach(r=>{
     const bt=r['Borrow Time']?new Date(r['Borrow Time']).getTime():0;
-    if(!bt||bt<start)return;
+    if(!bt)return;
+    const old=bt<start;if(old&&!hist)return;
+    const n=r['Agent Name'],unit=r['Phone Unit'],rid=r['Record ID'],orig=r['Verification Status']||'Unverified';
+    const base={agentName:n,recordId:rid,source:old?'HISTORICAL':'AUTOMATIC',occurredAt:iso(bt)};
     const stillOut=!r['Return Time']&&now-bt>=OVERDUE_HOURS*3600000;
-    if(!stillOut&&!isOverdueReturn(r))return;
-    const n=r['Agent Name'];
-    add({id:'ovd_'+r['Record ID'],type:'overdue',agentName:n,recordId:r['Record ID'],data:{Unit:r['Phone Unit'],Borrowed:fmt(r['Borrow Time']),Returned:stillOut?'Not yet returned':fmt(r['Return Time']),'Allowed hours':OVERDUE_HOURS},
-      title:`Overdue alert: ${n} kept Unit ${r['Phone Unit']} past the ${OVERDUE_HOURS}h limit.`,
-      detail:`Unit ${r['Phone Unit']} borrowed ${fmt(r['Borrow Time'])} — ${stillOut?'still not returned':'returned late'}.`});
+    if(stillOut||isOverdueReturn(r))add({...base,id:'ovd_'+rid,type:'overdue',
+      title:`Overdue alert: ${n} kept Unit ${unit} past the ${OVERDUE_HOURS}h limit.`,
+      detail:`Unit ${unit} borrowed ${fmt(r['Borrow Time'])} — ${stillOut?'still not returned':'returned late'}.`,
+      data:{Unit:unit,Borrowed:fmt(r['Borrow Time']),Returned:stillOut?'Not yet returned':fmt(r['Return Time']),'Allowed hours':OVERDUE_HOURS,'Original status':orig}});
+    if(orig==='Flagged'&&r['Return Time']){
+      const ag=`${r['Clients Called (Agent)']} / ${r['Successful Calls (Agent)']}`,ad=`${r['Clients Called (Admin)']} / ${r['Successful Calls (Admin)']}`;
+      add({...base,id:'mis_'+rid,type:'mismatch',title:`Verification alert: ${n}'s call counts for Unit ${unit} didn't match the admin count.`,
+        detail:`Unit ${unit}: agent reported ${ag} (calls / successful), admin counted ${ad}.`,
+        data:{Unit:unit,Borrowed:fmt(r['Borrow Time']),'Agent reported':ag,'Admin counted':ad,'Original status':orig}});
+    }
   });
-  if(start){ // completed activity periods only (last 8), counted per agent
-    const P=c.periodDays*86400000,cur=Math.floor((now-start)/P),agg={};
+  if(start){ // activity periods anchored at trackingStart; negative periods are before it
+    const P=c.periodDays*86400000,cur=Math.floor((now-start)/P),lo=hist?-Infinity:Math.max(0,cur-8),agg={};
     cacheRecords.forEach(r=>{
       if(!r['Return Time']||!r['Borrow Time'])return;
       const bt=new Date(r['Borrow Time']).getTime(),w=Math.floor((bt-start)/P);
-      if(bt<start||w>=cur||w<cur-8)return;
+      if(w>=cur||w<lo)return;
       const k=w+'|'+r['Agent Name'],x=agg[k]||(agg[k]={w,n:r['Agent Name'],calls:0,succ:0});
       x.calls+=effCalls(r);x.succ+=effSuccessful(r);
     });
     Object.values(agg).forEach(x=>{
-      const lab=`${fmtDay(start+x.w*P)} – ${fmtDay(start+(x.w+1)*P-1)}`,id=sanitizeId(x.n)+'_'+x.w;
-      const pct=x.calls?Math.round(x.succ/x.calls*100):0;
-      if(x.calls<c.minCalls)add({id:'calls_'+id,type:'calls',agentName:x.n,period:lab,data:{Period:lab,'Calls made':x.calls,'Required minimum':c.minCalls},
-        title:`Call activity alert: ${x.n} made only ${x.calls} calls (${lab}). Minimum required: ${c.minCalls}.`,
-        detail:`${x.calls} calls made · ${c.minCalls} required · ${lab}`});
-      if(x.calls>0&&x.succ*100/x.calls<=c.minSuccessRate)add({id:'rate_'+id,type:'rate',agentName:x.n,period:lab,data:{Period:lab,'Total calls':x.calls,'Successful calls':x.succ,'Success rate':pct+'%','Must exceed':c.minSuccessRate+'%'},
+      const lab=`${fmtDay(start+x.w*P)} – ${fmtDay(start+(x.w+1)*P-1)}`,id=sanitizeId(x.n)+'_'+x.w,pct=x.calls?Math.round(x.succ/x.calls*100):0;
+      const base={agentName:x.n,period:lab,source:x.w<0?'HISTORICAL':'AUTOMATIC',occurredAt:iso(start+(x.w+1)*P-1)};
+      if(x.calls<c.minCalls)add({...base,id:'calls_'+id,type:'calls',data:{Period:lab,'Calls made':x.calls,'Required minimum':c.minCalls},
+        title:`Call activity alert: ${x.n} made only ${x.calls} calls (${lab}). Minimum required: ${c.minCalls}.`,detail:`${x.calls} calls made · ${c.minCalls} required · ${lab}`});
+      if(x.calls>0&&x.succ*100/x.calls<=c.minSuccessRate)add({...base,id:'rate_'+id,type:'rate',data:{Period:lab,'Total calls':x.calls,'Successful calls':x.succ,'Success rate':pct+'%','Must exceed':c.minSuccessRate+'%'},
         title:`Call success rate alert: ${x.n} made ${x.calls} calls with ${x.succ} successful (${pct}%). Must exceed ${c.minSuccessRate}%.`,
         detail:`${x.succ} of ${x.calls} calls successful (${pct}%) · must exceed ${c.minSuccessRate}% · ${lab}`});
     });
@@ -2270,8 +2288,8 @@ function detectFlags(){
 
 function agState(a){
   const fl=mon.flags.filter(f=>f.agentName===a.name),pend=t=>fl.filter(f=>f.status==='pending'&&(!t||f.type===t)).length;
-  const ovd=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed').length,lvl=a.offenseLevel||0,thr=mon.config.overdueThresholds;
-  let pot=0;for(let k=1;k<=3;k++)if(ovd>=thr[k-1])pot=k;
+  const ovd=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed').length,ovdPot=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed'&&!(f.status==='pending'&&f.source==='HISTORICAL')).length,lvl=a.offenseLevel||0,thr=mon.config.overdueThresholds;
+  let pot=0;for(let k=1;k<=3;k++)if(ovdPot>=thr[k-1])pot=k;  // unreviewed historical flags never imply an offense
   return {fl,ovd,lvl,pot:pot>lvl?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
 }
 
@@ -2281,9 +2299,10 @@ async function loadMonitoring(){
   const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
   set(r);
   const fresh=detectFlags();
-  if(fresh.length&&(await api({action:'syncFlags',flags:fresh})).success){
+  if(fresh.length&&(await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh})).success){
     const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);
   }
+  mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL').length;renderBackfill();
   fillMonConfig();renderMonitoring();renderNotifPanel();
   if(selectedAgentDash)renderCompliance();
 }
@@ -2298,7 +2317,8 @@ function monNotifications(){
     if(s.lvl>=3&&!s.restricted)list.push({key:`mon-elig:${a.name}`,type:'mon',icon:'⚠️',agentName:a.name,time:new Date().toISOString(),
       title:`<b>Restriction review</b> — ${esc(a.name)} has a confirmed 3rd offense and is eligible for restriction.`});
   });
-  mon.flags.filter(f=>f.status==='pending'&&f.type!=='overdue').forEach(f=>list.push({key:'mon-flag:'+f.id,type:'mon',icon:'⚠️',agentName:f.agentName,time:f.createdAt,title:esc(f.title)}));
+  mon.flags.filter(f=>f.status==='pending'&&f.type!=='overdue'&&f.source!=='HISTORICAL').forEach(f=>list.push({key:'mon-flag:'+f.id,type:'mon',icon:'⚠️',agentName:f.agentName,time:f.createdAt,title:esc(f.title)}));
+  if(mon.uncovered)list.push({key:'mon-backfill:'+mon.uncovered,type:'mon',icon:'🗂️',time:new Date().toISOString(),title:`<b>Historical flags not imported</b> — ${mon.uncovered} flag${mon.uncovered>1?'s':''} from existing borrowing records can be backfilled for admin review.`});
   return list;
 }
 
@@ -2340,6 +2360,8 @@ function openMon(name){viewAgentPerformance(name);} // Monitoring page → the a
 const fmtD=v=>v?new Date(v).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—';
 const byDesc=k=>(x,y)=>(y[k]||'').localeCompare(x[k]||'');
 const pad=n=>String(n||'—').padStart(4,'0');
+const flagRef=f=>f.flagRef||pad(f.flagNo),fdate=f=>f.occurredAt||f.createdAt||'';
+const srcTag=f=>f.source==='HISTORICAL'?'<span class="tag tag-overdue">HISTORICAL</span> ':f.source==='MANUAL'?'<span class="tag tag-active">MANUAL</span> ':'';
 
 function flagCard(f,s,offs,rests,clar){
   const off=offs.find(o=>o.id===f.offenseId)||(f.offenseLevel?offs.find(o=>o.level===f.offenseLevel):null);
@@ -2348,14 +2370,31 @@ function flagCard(f,s,offs,rests,clar){
   const row=(l,v)=>`<div class="flag-row"><span>${l}</span><div>${v}</div></div>`;
   const btn=(cls,act,label)=>`<button class="btn ${cls}" data-f="${esc(f.id)}" data-t="${f.type}" onclick="monFlag(this.dataset.f,'${act}',this.dataset.t)" type="button">${label}</button>`;
   const data=Object.entries(f.data||{}).map(([k,v])=>`${esc(k)}: <b>${esc(v)}</b>`).join(' · ');
-  return `<div class="flag-card"><div class="flag-top"><b>FLAG #${pad(f.flagNo)}</b> · ${FLAG_LABEL[f.type]||f.type} <span class="tag ${st[0]}">${st[1]}</span></div>
-    ${row('Detected',fmt(f.createdAt))}${row('Reason',esc(f.detail))}${data?row('Original data',data):''}
+  return `<div class="flag-card"><div class="flag-top"><b>FLAG #${flagRef(f)}</b> · ${FLAG_LABEL[f.type]||f.type} ${srcTag(f)}<span class="tag ${st[0]}">${st[1]}</span></div>
+    ${f.source==='HISTORICAL'?row('Occurred',fmtD(f.occurredAt))+row('Source','HISTORICAL — backfilled '+fmtD(f.createdAt)+' from an existing borrowing record'):row('Detected',fmt(f.createdAt))+(f.occurredAt?row('Occurred',fmtD(f.occurredAt)):'')+row('Source',esc(f.source||'AUTOMATIC'))}${row('Reason',esc(f.detail))}${f.recordId?row('Original record',esc(f.recordId)+(f.data&&f.data.Unit?' · Unit '+esc(f.data.Unit):'')):''}${data?row('Original data',data):''}
     ${row('Reviewed',f.reviewedBy?`${esc(f.reviewedBy)} · ${fmt(f.reviewedAt)} · ${f.status==='dismissed'?'Dismissed':'Confirmed'}`:'Not reviewed yet')}
     ${(f.reason||f.notes)?row('Admin note',esc([f.reason,f.notes].filter(Boolean).join(' — '))):''}
     ${row('Enforcement',off?`<b>${ORD[off.level]} Offense</b> imposed by ${esc(off.admin)} · ${fmtD(off.at)}`:f.status==='dismissed'?'No offense (dismissed)':'No offense imposed')}
     ${off&&off.level===3?row('Restriction',rest?`Restricted ${fmtD(rest.at)} by ${esc(rest.by)}`:'Not restricted'):''}
     ${off&&off.level===3&&clar?row('Manager clarification',esc(clar.status)):''}
     ${(f.status==='pending'||(f.status!=='dismissed'&&!f.offenseLevel&&s.lvl<3))?`<div class="mon-btns">${f.status==='pending'?btn('btn-verify','confirm','Confirm Flag')+btn('btn-danger btn-sm','dismiss','Dismiss Flag'):''}${!f.offenseLevel&&s.lvl<3?btn('btn-info','impose','Impose '+ORD[s.lvl+1]+' Offense from this flag'):''}</div>`:''}</div>`;
+}
+
+// Ties the existing dashboard numbers (Flagged / Overdue Returns) to compliance flags, all-time.
+function reconcile(name,s){
+  const now=Date.now(),recs=cacheRecords.filter(r=>r['Agent Name']===name);
+  const isF=r=>r['Return Time']&&r['Verification Status']==='Flagged';
+  const isO=r=>isOverdueReturn(r)||(!r['Return Time']&&r['Borrow Time']&&now-new Date(r['Borrow Time'])>=OVERDUE_HOURS*3600000);
+  const rows=recs.filter(r=>isF(r)||isO(r)).sort((x,y)=>(y['Borrow Time']||'').localeCompare(x['Borrow Time']||''));
+  const fOf=r=>s.fl.filter(f=>f.recordId===r['Record ID']);
+  const nF=recs.filter(isF).length,nO=recs.filter(isO).length;
+  const missing=rows.filter(r=>(isF(r)&&!s.fl.some(f=>f.id==='mis_'+r['Record ID']))||(isO(r)&&!s.fl.some(f=>f.id==='ovd_'+r['Record ID']))).length;
+  const list=rows.map(r=>{const tags=[isF(r)?'Flagged':'',isO(r)?'Overdue':''].filter(Boolean).join(' + '),fl=fOf(r);
+    return `<div class="off-step"><span>${fl.length?'✓':'○'}</span><div>Unit ${esc(r['Phone Unit'])} · ${fmtD(r['Borrow Time'])} · ${tags} → ${fl.length?fl.map(f=>`Flag #${flagRef(f)} (${esc(f.status==='pending'?'pending review':f.status)})`).join(', '):'<span style="color:var(--red)">no compliance flag yet</span>'}</div></div>`;}).join('');
+  return `<div class="mon-sec">Reconciliation with existing records (all time)</div><div style="font-size:.78rem;line-height:1.6">
+    Borrowing records: Flagged <b>${nF}</b> · Overdue returns <b>${nO}</b> → Compliance flags: Call count mismatch <b>${s.fl.filter(f=>f.type==='mismatch').length}</b> · Overdue <b>${s.fl.filter(f=>f.type==='overdue').length}</b>${s.fl.some(f=>f.source==='HISTORICAL')?` (${s.fl.filter(f=>f.source==='HISTORICAL').length} historical)`:''}<br>
+    ${missing?`<span style="color:var(--red)">⚠ ${missing} of these record${missing>1?'s have':' has'} no compliance flag yet.</span> <button class="btn btn-warn" onclick="runBackfill()" type="button">Backfill Historical Flags</button>`:'✓ Every flagged or overdue record has a compliance flag.'}
+    ${rows.length?`<details style="margin-top:6px"><summary style="cursor:pointer;color:var(--primary);font-weight:600">View flag history</summary>${list}</details>`:''}</div>`;
 }
 
 function renderCompliance(name){
@@ -2369,15 +2408,17 @@ function renderCompliance(name){
   const cell=(l,v)=>`<div>${l}<b>${v}</b></div>`,yn=n=>n?'<span style="color:var(--red)">Yes</span>':'No';
   const alerts=[s.pAny?`⚠ ${s.pAny} flag${s.pAny>1?'s':''} awaiting review.`:'',s.pot?`Overdue count reaches the threshold for a potential ${ORD[s.pot]} offense — nothing is imposed until you decide.`:'',
     eligible?'Eligible for restriction. Request manager clarification, then restrict manually.':''].filter(Boolean);
-  const active=s.fl.filter(f=>f.status!=='dismissed').sort((x,y)=>(x.status==='pending'?0:1)-(y.status==='pending'?0:1)||(y.createdAt||'').localeCompare(x.createdAt||''));
-  const dism=s.fl.filter(f=>f.status==='dismissed').sort(byDesc('createdAt'));
+  const isActive=f=>f.status==='pending'||(f.status==='confirmed'&&!f.offenseLevel);
+  const active=s.fl.filter(isActive).sort((x,y)=>(x.status==='pending'?0:1)-(y.status==='pending'?0:1)||fdate(y).localeCompare(fdate(x)));
+  const dism=s.fl.filter(f=>!isActive(f)).sort((x,y)=>fdate(y).localeCompare(fdate(x)));
+  const recon=reconcile(name,s);
   const steps=[1,2,3].map(k=>{const o=offs.find(x=>x.level===k);
     return o?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Date: ${fmtD(o.at)} · Reason: ${esc(o.reason)} · Confirmed by: ${esc(o.admin)}${o.flagNo?' · Flag #'+pad(o.flagNo):''}${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.notes?'<br>Notes: '+esc(o.notes):''}</div></div>`
     :s.lvl>=k?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Skipped by override or recorded before history tracking</div></div>`
     :`<div class="off-step" style="color:var(--muted)"><span>○</span><div><b>${ORD[k]} Offense</b><br>Not yet imposed</div></div>`;}).join('');
   const restHtml=rests.map(r=>`<div class="off-step"><span>${r.active?'🔴':'🟢'}</span><div><b>${r.active?'Restricted':'Restriction removed'}</b> · Applied ${fmtD(r.at)} by ${esc(r.by)} — ${esc(r.reason)}${r.active?'':`<br>Removed ${fmtD(r.removedAt)} by ${esc(r.removedBy)} — ${esc(r.removeReason)}`}</div></div>`).join('');
   const ev=[];
-  s.fl.forEach(f=>ev.push({t:f.createdAt,ic:'🟡',title:`Flag #${pad(f.flagNo)} detected — ${FLAG_LABEL[f.type]||f.type}`,sub:f.detail}));
+  s.fl.forEach(f=>ev.push({t:fdate(f),ic:f.source==='HISTORICAL'?'⚠':'🟡',title:f.source==='HISTORICAL'?`Historical ${(FLAG_LABEL[f.type]||f.type).toLowerCase()} flag #${flagRef(f)}`:`Flag #${flagRef(f)} detected — ${FLAG_LABEL[f.type]||f.type}`,sub:(f.source==='HISTORICAL'?'Source: existing borrowing record — ':'')+f.detail}));
   mon.audit.filter(e=>e.agentName===name&&e.violationType!=='settings').forEach(e=>{
     const d=e.decision||'',ic=/restricted/i.test(d)?'🔴':/clarification/i.test(d)?'🟠':/dismissed|note/i.test(d)?'⚪':'🟢';
     ev.push({t:e.at,ic,title:d==='Offense imposed'?`${ORD[e.newLevel]} offense imposed`:d,admin:e.admin,sub:[e.reason,e.notes].filter(Boolean).join(' — ')});
@@ -2387,8 +2428,8 @@ function renderCompliance(name){
     ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clar.status):'Not requested')}
     ${cell('Overdue count',s.ovd)}${cell('Call activity flag',yn(s.pCalls))}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
     ${alerts.length?`<div class="mon-alert">${alerts.map(esc).join('<br>')}</div>`:''}
-    <div class="mon-sec">Active flags</div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
-    ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">${dism.length} dismissed flag${dism.length>1?'s':''}</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
+    ${recon}<div class="mon-sec">Active flags</div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
+    ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Historical / review history — ${dism.length} reviewed flag${dism.length>1?'s':''}</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
     <div class="mon-sec">Offense history</div>${steps}
     <div class="mon-sec">Restriction status</div>
     <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b><br>Manager clarification: ${clar?esc(clar.status)+(clar.manager?' · Manager: '+esc(clar.manager):''):'Not requested'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmtD(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
@@ -2418,6 +2459,37 @@ function monFlag(flagId,act,type){
   return monCall({action:'reviewFlag',flagId,decision:act});
 }
 function monClarStatus(id,status){return monCall({action:'updateClarification',id,status});}
+
+function renderBackfill(res){
+  const box=document.getElementById('monBackfill');if(!box)return;
+  let last=res;
+  if(!last){const e=mon.audit.filter(x=>x.decision==='Historical backfill').sort(byDesc('at'))[0];if(e){try{last={...JSON.parse(e.notes),at:e.at,admin:e.admin};}catch{}}}
+  const u=mon.uncovered||0;
+  box.innerHTML=`<div style="font-size:.78rem">${u?`⚠ <b>${u}</b> flag${u>1?'s':''} from existing borrowing records ${u>1?'have':'has'} not been imported yet.`:'✓ Every existing record already has its compliance flag.'}</div>`+
+    (last?`<div class="mon-alert" style="font-weight:500;line-height:1.6"><b>Historical Flag Migration ${res?'Complete':'— last run'}</b>${last.at?` <span style="color:var(--muted)">${fmt(last.at)} · ${esc(last.admin)}</span>`:''}<br>
+      Agents scanned: ${last.agents}<br>Records scanned: ${last.records}<br>Historical flags created: ${last.created}<br>Existing flags skipped: ${last.skipped}<br>Duplicates prevented: ${last.dupPrevented}</div>`:'');
+}
+let backfilling=false;
+async function runBackfill(){
+  if(backfilling)return;
+  const cand=detectFlags(true).filter(f=>f.source==='HISTORICAL').sort((x,y)=>x.occurredAt.localeCompare(y.occurredAt));
+  const summary={agents:new Set(cacheRecords.map(r=>r['Agent Name'])).size,records:cacheRecords.length,created:0,skipped:detectSkipped,dupPrevented:0};
+  if(!cand.length){renderBackfill({...summary,admin:currentAdminUsername});return toast('Nothing to backfill — existing records already have flags.','info');}
+  const by={};cand.forEach(f=>{by[f.type]=(by[f.type]||0)+1;});
+  if(!confirm(`Backfill historical flags?\n\nRecords scanned: ${summary.records}\nNew historical flags: ${cand.length} (${Object.entries(by).map(([k,v])=>`${FLAG_LABEL[k]||k}: ${v}`).join(', ')})\nAlready flagged, skipped: ${summary.skipped}\n\nEvery new flag starts as Pending Admin Review, dated from the original record. No offenses or restrictions are applied and no borrowing records are changed.`))return;
+  backfilling=true;const btn=document.getElementById('btnBackfill');
+  try{
+    for(let i=0;i<cand.length;i+=40){
+      btn.disabled=true;btn.textContent=`Backfilling… ${Math.min(i+40,cand.length)}/${cand.length}`;
+      const r=await api({action:'syncFlags',admin:currentAdminUsername,flags:cand.slice(i,i+40)});
+      if(!r.success){toast('❌ '+r.message+' — run again to continue; finished flags are skipped.','error');return;}
+      summary.created+=r.created;summary.dupPrevented+=r.skipped;
+    }
+    await api({action:'logBackfill',admin:currentAdminUsername,summary});
+    toast(`✅ ${summary.created} historical flags created for review.`,'success');
+    await loadMonitoring();renderBackfill({...summary,admin:currentAdminUsername});
+  }finally{backfilling=false;btn.disabled=false;btn.textContent='Backfill Historical Flags';}
+}
 
 // ── HELPERS ───────────────────────────────────────────
 function tagCls(s){return s==='Verified'?'tag-verified':s==='Flagged'?'tag-flagged':'tag-unverified';}

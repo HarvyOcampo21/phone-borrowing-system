@@ -722,7 +722,9 @@ async function adminLogin(data) {
 //   clarifications/{id}     manager-clarification requests
 //   offenses/{id}           one immutable record per imposed offense (level, flag, admin, reason)
 //   restrictions/{id}       one record per restriction (applied / removed)
-//   counters/flags          running number for FLAG #0001-style ids
+//   counters/flags, counters/histFlags   running numbers for FLAG #0001 / HIST-001 ids
+// Flag.source: AUTOMATIC (live detection) | HISTORICAL (backfilled from pre-existing borrowing records) | MANUAL.
+// Backfill is additive: it only creates pending flags (dated from the original record) and never touches records, offenses or restrictions.
 //   agents/{slug}           + offenseLevel (0-3), restricted, restrictionReason, restrictedAt/By
 // Enforcement actions need admins/{user}.canEnforce !== false (default allowed;
 // set canEnforce:false on an admin doc to make them view/review-only).
@@ -787,20 +789,30 @@ const saveMonitorConfig = guard(async (d) => {
 // only ever created if it doesn't exist — so re-running detection never
 // resets a flag an admin already reviewed.
 const syncFlags = guard(async (d) => {
-  let created = 0;
-  for (const f of d.flags || []) {
-    const ref = doc(db, "flags", f.id);
+  const list = d.flags || [];
+  if (list.some((f) => f.source === "HISTORICAL")) await assertEnforcer(d.admin); // backfill is an admin action
+  let created = 0, skipped = 0;
+  for (const f of list) {
+    const ref = doc(db, "flags", f.id), hist = f.source === "HISTORICAL";
     await runTransaction(db, async (tx) => {
-      const cref = doc(db, "counters", "flags");
+      const cref = doc(db, "counters", hist ? "histFlags" : "flags");
       const fs = await tx.get(ref), cs = await tx.get(cref);
-      if (fs.exists()) return;
+      if (fs.exists()) { skipped++; return; } // never overwrite a flag that already exists
       const flagNo = (cs.exists() ? cs.data().n : 0) + 1;
       tx.set(cref, { n: flagNo });
-      tx.set(ref, { ...f, flagNo, status: "pending", createdAt: Timestamp.now(), reviewedBy: null, reviewedAt: null, offenseLevel: null, reason: "", notes: "" });
+      tx.set(ref, { ...f, flagNo, flagRef: hist ? "HIST-" + String(flagNo).padStart(3, "0") : String(flagNo).padStart(4, "0"),
+        source: f.source || "AUTOMATIC", sourceRecordId: f.recordId || null,
+        status: "pending", createdAt: Timestamp.now(), reviewedBy: null, reviewedAt: null, offenseLevel: null, reason: "", notes: "" });
       created++;
     });
   }
-  return { success: true, created };
+  return { success: true, created, skipped };
+});
+
+const logBackfill = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  await writeAudit({ violationType: "migration", decision: "Historical backfill", admin: d.admin, notes: JSON.stringify(d.summary || {}) });
+  return { success: true };
 });
 
 const reviewFlag = guard(async (d) => {
@@ -964,6 +976,7 @@ export async function api(payload) {
       case "getMonitoring": return await getMonitoring(payload);
       case "saveMonitorConfig": return await saveMonitorConfig(payload);
       case "syncFlags": return await syncFlags(payload);
+      case "logBackfill": return await logBackfill(payload);
       case "reviewFlag": return await reviewFlag(payload);
       case "imposeOffense": return await imposeOffense(payload);
       case "requestClarification": return await requestClarification(payload);
