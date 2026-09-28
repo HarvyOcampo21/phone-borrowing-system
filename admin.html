@@ -2234,6 +2234,7 @@ async function loadHistory(){
 let mon={config:{minCalls:10,minSuccessRate:50,periodDays:7,overdueThresholds:[1,2,3],trackingStart:''},flags:[],audit:[],clars:[],offenses:[],restr:[]};
 let monFilter='all';
 const ORD=['','1st','2nd','3rd'];
+const CLAR_OPEN=['Pending Clarification','Clarification Received','Verified','Restriction Approved']; // must match firebase-api.js
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDay=t=>new Date(t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
 const MON_FILTERS=[['all','All Agents'],['none','No Flags'],['has','Has Flags'],['overdue','Overdue Flags'],['calls','Call Activity Flags'],['rate','Success Ratio Flags'],['fcall','Call Log / Verification'],['fovd','Overdue Return'],['fboth','Both / Multiple Flags'],['o1','1st Offense'],['o2','2nd Offense'],['o3','3rd Offense'],['restricted','Restricted Agents']];
