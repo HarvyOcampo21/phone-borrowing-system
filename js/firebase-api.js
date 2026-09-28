@@ -865,7 +865,8 @@ const incidentLabel = (fd) => (fd.data && fd.data.Unit ? "Unit " + fd.data.Unit 
 
 const imposeOffense = guard(async (d) => {
   await assertEnforcer(d.admin);
-  let reason = (d.reason || "").toString().trim(), flagReason = d.flagReason || null;   // reason text is optional; the structured flagReason is required
+  if (!d.flagId) throw new Error("Select the specific flag this offense applies to — offenses can't be created without a linked flag.");
+  const reason = need(d.reason, "A reason is required to assign an offense."); let flagReason = d.flagReason || null;
   if (flagReason && !FLAG_REASONS[flagReason]) throw new Error("Unknown violation type.");
   const agentName = need(d.agentName, "Missing agent.");
   const aref = doc(db, "agents", slug(agentName));
@@ -896,7 +897,6 @@ const imposeOffense = guard(async (d) => {
         ...(wasPending ? { reviewedBy: d.admin, reviewedAt: Timestamp.now() } : {}) });
     }
     if (!flagReason) throw new Error("Choose the violation type (Call Log / Verification or Overdue Return).");
-    if (!reason) reason = FLAG_REASONS[flagReason];
     tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: prev, flagReason,
       flagId: d.flagId || null, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null,
       sourceRecordId: fd.sourceRecordId || fd.recordId || null,

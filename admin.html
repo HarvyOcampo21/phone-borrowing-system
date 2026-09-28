@@ -505,20 +505,15 @@
             <div id="compBody"></div>
             <div class="mon-actions">
               <div class="card-title" style="margin-bottom:8px">Enforcement actions — manual only</div>
-              <div class="field"><label>Violation type — required for the Impose buttons (offenses assigned from a flag take it from the flag)</label><select id="monFlagReason"><option value="">Select Reason</option><option value="CALL_LOG_VERIFICATION">Call Log / Verification</option><option value="OVERDUE_RETURN">Overdue Return</option></select></div>
-              <div class="field"><label>Reason (required for dismissals, clarification and restriction changes; optional detail for offenses)</label><input type="text" id="monReason" autocomplete="off"/></div>
+              <div class="field"><label>Reason (required for clarification and restriction changes)</label><input type="text" id="monReason" autocomplete="off"/></div>
               <div class="field" style="margin-bottom:0"><label>Admin notes</label><textarea id="monNotes" style="min-height:56px"></textarea></div>
               <div class="mon-btns">
-                <button class="btn btn-primary btn-sm" id="btnO1" onclick="monImpose(1)" type="button">Impose 1st Offense</button>
-                <button class="btn btn-primary btn-sm" id="btnO2" onclick="monImpose(2)" type="button">Impose 2nd Offense</button>
-                <button class="btn btn-primary btn-sm" id="btnO3" onclick="monImpose(3)" type="button">Impose 3rd Offense</button>
                 <button class="btn btn-info" id="btnClar" onclick="monAct('requestClarification')" type="button">Request Manager Clarification</button>
                 <button class="btn btn-danger btn-sm" id="btnRestrict" onclick="monAct('restrictAgent')" type="button">Restrict Agent</button>
                 <button class="btn btn-verify" id="btnUnrestrict" onclick="monAct('removeRestriction')" type="button">Remove Restriction</button>
                 <button class="btn btn-warn" onclick="monAct('addAdminNote')" type="button">Add Note</button>
               </div>
-              <label style="display:flex;gap:6px;align-items:center;font-weight:500;margin:12px 0 0"><input type="checkbox" id="monOverride" style="width:auto" onchange="renderCompliance()"/> Override sequence (allow skipping a level — reason required)</label>
-              <div style="font-size:.7rem;color:var(--muted);margin-top:8px">These buttons record an offense with no linked flag. To tie an offense to a specific flag and original record, use <b>Flag history</b> above.</div>
+              <div style="font-size:.72rem;color:var(--muted);margin-top:8px">Offenses are not assigned here. Open <b>Flag history</b> above and use <b>Assign Offense</b> on the specific flag, so every offense is tied to one incident.</div>
               <div id="monHint" style="font-size:.72rem;color:var(--muted);margin-top:8px"></div>
             </div>
             <div id="compTimeline"></div>
@@ -2445,7 +2440,7 @@ function offCtl(f){
   const cur=curOff(f);
   if(cur)return `<b>${ORD[cur.level]} Offense</b><div class="fh-mut">Assigned ${fmt(cur.at)} by ${esc(cur.admin)}</div><button class="btn btn-warn" data-f="${esc(f.id)}" onclick="openOffModal(this.dataset.f,'reassign')" type="button">Reassign Offense</button>`;
   const taken=takenLevels(f.agentName);
-  return `<div class="fh-mut">Offense</div><select class="fh-sel" data-f="${esc(f.id)}" onchange="pickOffense(this)"><option value="0">No Offense</option>${[1,2,3].map(k=>`<option value="${k}"${taken.includes(k)?' disabled':''}>${ORD[k]} Offense${taken.includes(k)?' (already assigned)':''}</option>`).join('')}</select>`;
+  return `<div class="fh-mut">Assign Offense</div><select class="fh-sel" data-f="${esc(f.id)}" onchange="pickOffense(this)"><option value="0">No Offense</option>${[1,2,3].map(k=>`<option value="${k}"${taken.includes(k)?' disabled':''}>${ORD[k]} Offense${taken.includes(k)?' (already assigned)':''}</option>`).join('')}</select>`;
 }
 function flagHistory(name,s){
   const R=reconData(name,s),G={};
@@ -2507,8 +2502,8 @@ function showOffModal(){
     ${row('Agent',esc(f.agentName))}${row('Flag',`#${flagRef(f)} · ${flagTitle(f)} · ${esc(incident(f))}`)}${row('Original incident',`<b>${fmt(fdate(f))}</b>`)}${(f.recordId||f.sourceRecordId)?row('Source record',esc(f.recordId||f.sourceRecordId)):''}
     ${m.mode==='assign'?row('New offense',`<b>${ORD[lvl]} Offense</b>`):row('Current',`<b>${ORD[cur.level]} Offense</b> · assigned ${fmt(cur.at)} by ${esc(cur.admin)}`)+`<div class="flag-row"><span>New</span><div><select id="offNewLvl" onchange="offPick(this.value)">${opts}</select></div></div>`}
     ${skip?`<label style="display:flex;gap:6px;align-items:center;font-weight:500;margin:10px 0 0;font-size:.78rem"><input type="checkbox" id="offOverride" style="width:auto"${m.override?' checked':''}/> Sequence override — the next offense in order is the ${ORD[nextFree(taken)]||'—'}; this skips a level</label>`:''}
-    ${m.mode==='assign'?`<div class="field" style="margin-top:14px"><label>Reason (violation type — set by the flag)</label><select id="offFlagReason" disabled><option value="">Select Reason</option>${Object.entries(REASON_LABEL).map(([k,l])=>`<option value="${k}"${k===reasonOf(f)?' selected':''}>${l}</option>`).join('')}</select></div>`
-      :`${row('Violation',esc(REASON_LABEL[reasonOf(f)]||''))}<div class="field" style="margin-top:14px"><label>Reason for this change (required)</label><input type="text" id="offReason" autocomplete="off" value="${esc(m.reason)}"/></div>`}
+    <div class="field" style="margin-top:14px"><label>Violation type (set by the flag)</label><select id="offFlagReason" disabled><option value="">Select Reason</option>${Object.entries(REASON_LABEL).map(([k,l])=>`<option value="${k}"${k===reasonOf(f)?' selected':''}>${l}</option>`).join('')}</select></div>
+    <div class="field"><label>${m.mode==='assign'?'Reason for this offense (required)':'Reason for this change (required)'}</label><input type="text" id="offReason" autocomplete="off" value="${esc(m.reason)}"/></div>
     <div class="field"><label>Admin notes</label><textarea id="offNotes" style="min-height:56px">${esc(m.notes)}</textarea></div>
     <div style="font-size:.72rem;color:var(--muted)">Recorded with your name and the current date and time. ${m.mode==='reassign'?'The original assignment stays in the audit trail.':''}</div>
     <div class="mon-btns"><button class="btn btn-sm" onclick="closeMonModal()" type="button" style="border:1.5px solid var(--border);color:var(--muted)">Cancel</button><button class="btn btn-primary btn-sm" id="offConfirm" onclick="confirmOff()" type="button">${label}</button></div>`);
@@ -2516,7 +2511,7 @@ function showOffModal(){
 async function confirmOff(){
   const m=offM;if(!m)return;
   const re=document.getElementById('offReason'),reason=re?re.value.trim():'',notes=document.getElementById('offNotes').value.trim(),ov=document.getElementById('offOverride');
-  if(m.mode==='reassign'&&!reason)return toast('❌ A reason for the change is required.','error');
+  if(!reason)return toast('❌ A reason is required.','error');
   const f=flagOf(m.flagId),btn=document.getElementById('offConfirm');
   if(!reasonOf(f))return toast('❌ This flag has no violation type.','error');
   btn.disabled=true;
@@ -2572,7 +2567,7 @@ function renderCompliance(name){
   const chainBtns=o=>o.flagId&&flagOf(o.flagId)?`<div class="mon-btns" style="margin-top:4px">${linkBtns(flagOf(o.flagId))}</div>`:'';
   const steps=[1,2,3].map(k=>{const o=activeOffs.find(x=>x.level===k);
     return o?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b>${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.previousOffenseId?' <span class="tag tag-active">Reassigned</span>':''}
-        <br>Incident: ${esc(offIncident(o))}${offFlagRef(o)}<br>Incident Date: <b>${fmt(offIncidentAt(o))}</b>
+        <br>Incident: ${esc(offIncident(o))}${offFlagRef(o)}<br>Violation: ${esc(REASON_LABEL[offReason(o)]||'—')}${o.sourceRecordId?' · Source record: '+esc(o.sourceRecordId):''}<br>Incident Date: <b>${fmt(offIncidentAt(o))}</b>
         <br>Assigned: ${fmt(o.at)}<br>Assigned By: ${esc(o.admin)}<br>Reason: <b>${esc(REASON_LABEL[offReason(o)]||o.reason)}</b>${REASON_LABEL[offReason(o)]&&o.reason&&o.reason!==REASON_LABEL[offReason(o)]?' — '+esc(o.reason):''}${o.notes?'<br>Notes: '+esc(o.notes):''}${chainBtns(o)}</div></div>`
     :s.lvl>=k&&!offs.some(x=>x.level===k)?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Recorded before offense records were kept — no linked flag</div></div>`
     :`<div class="off-step" style="color:var(--muted)"><span>○</span><div><b>${ORD[k]} Offense</b><br>Not yet imposed</div></div>`;}).join('');
@@ -2589,7 +2584,7 @@ function renderCompliance(name){
     ${reconcile(name,s)}${secH('Active flags')}<div style="font-size:.78rem;margin-bottom:8px">Overdue Return: <b>${s.cOvd}</b> · Call Log / Verification: <b>${s.cCall}</b> · Total flags: <b>${active.length}</b></div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
     ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Reviewed flags — ${dism.length} flag${dism.length>1?'s':''} (dismissed or already turned into an offense)</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
     ${flagHistory(name,s)}
-    ${secH('Offense history')}${steps}${supHtml}
+    ${secH('Offense history')}<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Read-only summary. Offenses are assigned or changed from the specific flag in Flag history.</div>${steps}${supHtml}
     ${secH('Restriction status')}
     <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b><br>Manager clarification: ${clar?esc(clar.status)+(clar.manager?' · Manager: '+esc(clar.manager):''):'Not requested'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmt(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
     ${secH('Manager clarification')}${clarHtml}`;
@@ -2610,26 +2605,23 @@ function renderCompliance(name){
   ev.sort(byAsc('t'));
   const tl=document.getElementById('compTimeline');
   if(tl)tl.innerHTML=secH('Compliance timeline')+(ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · Admin: '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>');
-  const ov=document.getElementById('monOverride').checked,dis=(id,v)=>{document.getElementById(id).disabled=v;};
-  [1,2,3].forEach(k=>{const b=document.getElementById('btnO'+k);b.disabled=!(k===s.lvl+1||(ov&&k>s.lvl));b.title=k<=s.lvl?'Already imposed':k>s.lvl+1&&!ov?'Offenses are imposed in order — use the override to skip':'';});
+  const dis=(id,v)=>{document.getElementById(id).disabled=v;};
   dis('btnClar',s.lvl<3||openClar);dis('btnRestrict',!eligible||!clarOk);dis('btnUnrestrict',!s.restricted);
   document.getElementById('monHint').textContent=eligible&&!clarOk?(clar?'Restriction unlocks once the clarification is marked Received or Verified.':'Restriction unlocks after a manager clarification is requested and received.'):'';
 }
 
 async function monCall(payload){
   const name=selectedAgentDash;if(!name)return false;
-  const ask={imposeOffense:'Impose this offense?',restrictAgent:'Restrict this agent? They will be blocked from borrowing phones.',removeRestriction:'Remove this restriction?'}[payload.action];
+  const ask={restrictAgent:'Restrict this agent? They will be blocked from borrowing phones.',removeRestriction:'Remove this restriction?'}[payload.action];
   if(ask&&!confirm(`${name}: ${ask}`))return false;
   const res=await api({admin:currentAdminUsername,agentName:name,reason:document.getElementById('monReason').value.trim(),notes:document.getElementById('monNotes').value.trim(),...payload});
   if(!res.success){toast('❌ '+res.message,'error');return false;}
   toast('✅ '+res.message,'success');
   const ag=await api({action:'getAgents'});if(ag.success){cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);}
-  ['monReason','monNotes','monFlagReason'].forEach(id=>{document.getElementById(id).value='';});document.getElementById('monOverride').checked=false;
+  ['monReason','monNotes'].forEach(id=>{document.getElementById(id).value='';});
   await loadMonitoring();return true;
 }
 const monAct=action=>monCall({action});
-const monImpose=level=>{const fr=document.getElementById('monFlagReason').value;if(!fr){toast('❌ Select the violation type (Call Log / Verification or Overdue Return) first.','error');return false;}
-  return monCall({action:'imposeOffense',level,flagReason:fr,override:document.getElementById('monOverride').checked});};
 function monFlag(flagId,act){return monCall({action:'reviewFlag',flagId,decision:act});} // confirm / dismiss only — offenses are assigned through the confirmation modal
 function monClarStatus(id,status){return monCall({action:'updateClarification',id,status});}
 
