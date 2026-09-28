@@ -720,7 +720,8 @@ async function adminLogin(data) {
 //   flags/{id}              { type: overdue|calls|rate, agentName, status: pending|confirmed|dismissed, ... }
 //   auditLog/{id}           one entry per admin action
 //   clarifications/{id}     manager-clarification requests
-//   offenses/{id}           one immutable record per imposed offense (level, flag, admin, reason)
+//   offenses/{id}           one record per offense, linked to its flag + source borrowing record; incidentAt = original event time,
+//                           at = when the admin assigned it; status active|superseded (never deleted)
 //   restrictions/{id}       one record per restriction (applied / removed)
 //   counters/flags, counters/histFlags   running numbers for FLAG #0001 / HIST-001 ids
 // Flag.source: AUTOMATIC (live detection) | HISTORICAL (backfilled from pre-existing borrowing records) | MANUAL.
@@ -828,35 +829,112 @@ const reviewFlag = guard(async (d) => {
   return { success: true, message: dismiss ? "Flag dismissed — no offense." : "Flag confirmed. Impose an offense if it's warranted." };
 });
 
+// ── OFFENSE RECORDS ─────────────────────────────────────────
+// One record per offense, permanently linked to the flag (and through it, the original borrowing
+// record) that caused it. agents/{slug}.offenseLevel is only a cache: it is always recomputed as the
+// highest ACTIVE offense record. A record is never deleted — reassigning/withdrawing marks it
+// status:"superseded" (who/when/why) and, if reassigned, creates a new linked record.
+const ORD_API = ["", "1st", "2nd", "3rd"];
+const isActiveOff = (o) => o.status !== "superseded";
+// Levels that can't be handed out again: active records, plus "legacy" levels the agent doc claims
+// but that have no record at all (imposed before offense records existed).
+function takenLevels(all, cached, excludeId) {
+  const t = all.filter((o) => isActiveOff(o) && o.id !== excludeId).map((o) => o.level), have = new Set(all.map((o) => o.level));
+  for (let k = 1; k <= cached; k++) if (!have.has(k)) t.push(k);
+  return t;
+}
+const nextFree = (taken) => [1, 2, 3].find((k) => !taken.includes(k)) || 0;
+const incidentLabel = (fd) => (fd.data && fd.data.Unit ? "Unit " + fd.data.Unit : fd.detail || fd.type || "");
+
 const imposeOffense = guard(async (d) => {
   await assertEnforcer(d.admin);
   const reason = need(d.reason, "A reason is required to impose an offense.");
-  const aref = doc(db, "agents", slug(need(d.agentName, "Missing agent.")));
+  const agentName = need(d.agentName, "Missing agent.");
+  const aref = doc(db, "agents", slug(agentName));
   const fref = d.flagId ? doc(db, "flags", d.flagId) : null;
   const level = Number(d.level), oid = "OFF-" + Date.now();
-  let prev, fd = {};
+  if (!(level >= 1 && level <= 3)) throw new Error("Choose the 1st, 2nd or 3rd offense.");
+  const all = (await listAll("offenses")).filter((o) => o.agentName === agentName);
+  let prev, fd = {}, wasPending = false;
   await runTransaction(db, async (tx) => {
     const a = await tx.get(aref);
     const f = fref ? await tx.get(fref) : null;
     if (!a.exists()) throw new Error("Agent not found.");
     prev = a.data().offenseLevel || 0;
-    if (!(level >= 1 && level <= 3) || level <= prev) throw new Error("Choose an offense level above the current one.");
-    if (level !== prev + 1 && !d.override) throw new Error("Offenses are imposed in order. Use the override to skip a level.");
-    if (f && f.exists()) {
+    const taken = takenLevels(all, prev);
+    if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " offense is already assigned. Use Reassign Offense on that flag to move it.");
+    if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are assigned in order (next is the " + ORD_API[nextFree(taken)] + "). Use the sequence override to skip a level.");
+    if (fref) {
+      if (!f.exists()) throw new Error("Flag not found.");
       fd = f.data();
+      if (fd.agentName !== agentName) throw new Error("That flag belongs to a different agent.");
       if (fd.status === "dismissed") throw new Error("This flag was dismissed.");
-      if (fd.offenseLevel) throw new Error("This flag already produced an offense.");
-      tx.update(fref, { status: "confirmed", offenseLevel: level, offenseId: oid, reviewedBy: d.admin, reviewedAt: Timestamp.now() });
+      if (fd.offenseLevel) throw new Error("This flag already has an offense. Use Reassign Offense to change it.");
+      wasPending = fd.status === "pending";
+      tx.update(fref, { status: "confirmed", offenseLevel: level, offenseId: oid,
+        ...(wasPending ? { reviewedBy: d.admin, reviewedAt: Timestamp.now() } : {}) });
     }
-    // Each offense is its own permanent record; the agent doc only caches the current level.
-    tx.set(doc(db, "offenses", oid), { id: oid, agentName: d.agentName, level, prevLevel: prev, flagId: d.flagId || null, flagNo: fd.flagNo || null,
-      violationType: d.violationType || "manual", flagDetail: fd.detail || "", flagData: fd.data || null, decision: "Offense imposed",
-      reason, notes: d.notes || "", admin: d.admin, at: Timestamp.now(), override: level !== prev + 1 });
-    tx.update(aref, { offenseLevel: level });
+    tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: prev,
+      flagId: d.flagId || null, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null,
+      sourceRecordId: fd.sourceRecordId || fd.recordId || null,
+      incidentAt: fd.occurredAt || fd.createdAt || null,   // WHEN THE INCIDENT HAPPENED (original event)
+      incidentLabel: fref ? incidentLabel(fd) : "",
+      violationType: d.violationType || fd.type || "manual", flagDetail: fd.detail || "", flagData: fd.data || null, decision: "Offense imposed",
+      reason, notes: d.notes || "", admin: d.admin, at: Timestamp.now(),   // WHEN THE ADMIN ASSIGNED IT
+      override: level !== nextFree(taken), previousOffenseId: null });
+    tx.update(aref, { offenseLevel: Math.max(prev, level) });
   });
-  await writeAudit({ agentName: d.agentName, violationType: d.violationType || "manual", flagId: d.flagId || null, decision: "Offense imposed",
-    admin: d.admin, prevLevel: prev, newLevel: level, reason, notes: d.notes, offenseId: oid });
-  return { success: true, message: ["", "1st", "2nd", "3rd"][level] + " offense imposed." };
+  const ev = { agentName, violationType: d.violationType || fd.type || "manual", flagId: d.flagId || null, flagRef: fd.flagRef || null,
+    incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: fref ? incidentLabel(fd) : "", offenseId: oid, admin: d.admin };
+  if (wasPending) await writeAudit({ ...ev, decision: "Flag confirmed", reason, notes: d.notes });
+  await writeAudit({ ...ev, decision: "Offense imposed", prevLevel: prev, newLevel: level, reason, notes: d.notes });
+  return { success: true, message: ORD_API[level] + " offense assigned." };
+});
+
+// Move a flag's offense to another number, or withdraw it (level 0). The original assignment stays
+// in the audit trail (status "superseded"). Never automatic.
+const reassignOffense = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const reason = need(d.reason, "A reason is required to change an offense.");
+  const agentName = need(d.agentName, "Missing agent.");
+  const level = Number(d.level || 0);
+  if (!(level >= 0 && level <= 3)) throw new Error("Choose No Offense, 1st, 2nd or 3rd.");
+  const aref = doc(db, "agents", slug(agentName)), fref = doc(db, "flags", need(d.flagId, "Missing flag."));
+  const all = (await listAll("offenses")).filter((o) => o.agentName === agentName);
+  const oid = "OFF-" + Date.now();
+  let fd, cur, newLevel;
+  await runTransaction(db, async (tx) => {
+    const a = await tx.get(aref), f = await tx.get(fref);
+    if (!a.exists()) throw new Error("Agent not found.");
+    if (!f.exists()) throw new Error("Flag not found.");
+    fd = f.data();
+    cur = all.find((o) => isActiveOff(o) && (o.id === fd.offenseId || o.flagId === d.flagId));
+    if (!cur) throw new Error("This flag has no offense to reassign — assign one instead.");
+    const ocur = await tx.get(doc(db, "offenses", cur.id));
+    if (!ocur.exists() || ocur.data().status === "superseded") throw new Error("This offense changed in the meantime — refresh and try again.");
+    if (level === cur.level) throw new Error("That is already this flag's offense.");
+    const cached = a.data().offenseLevel || 0;
+    const taken = takenLevels(all, cached, cur.id);
+    if (level > 0) {
+      if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " offense is already assigned to another flag.");
+      if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are assigned in order (next is the " + ORD_API[nextFree(taken)] + "). Use the sequence override to skip a level.");
+    }
+    newLevel = Math.max(0, ...taken, level);
+    if (a.data().restricted && newLevel < 3) throw new Error("This agent is restricted. Remove the restriction before lowering the offense level.");
+    tx.update(doc(db, "offenses", cur.id), { status: "superseded", supersededAt: Timestamp.now(), supersededBy: d.admin,
+      supersededReason: reason, supersededNotes: d.notes || "", replacedById: level ? oid : null, replacedByLevel: level });
+    if (level) tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: cur.level,
+      flagId: d.flagId, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null, sourceRecordId: fd.sourceRecordId || fd.recordId || null,
+      incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: incidentLabel(fd),
+      violationType: fd.type || "manual", flagDetail: fd.detail || "", flagData: fd.data || null, decision: "Offense reassigned",
+      reason, notes: d.notes || "", admin: d.admin, at: Timestamp.now(), override: level !== nextFree(taken), previousOffenseId: cur.id, previousLevel: cur.level });
+    tx.update(fref, { offenseLevel: level || null, offenseId: level ? oid : null });
+    tx.update(aref, { offenseLevel: newLevel });
+  });
+  await writeAudit({ agentName, violationType: fd.type || "manual", flagId: d.flagId, flagRef: fd.flagRef || null,
+    incidentAt: fd.occurredAt || fd.createdAt || null, incidentLabel: incidentLabel(fd), offenseId: level ? oid : cur.id, previousOffenseId: cur.id,
+    decision: level ? "Offense reassigned" : "Offense withdrawn", admin: d.admin, prevLevel: cur.level, newLevel: level, reason, notes: d.notes });
+  return { success: true, message: level ? "Offense reassigned: " + ORD_API[cur.level] + " → " + ORD_API[level] + "." : "Offense withdrawn from this flag." };
 });
 
 const requestClarification = guard(async (d) => {
@@ -904,7 +982,7 @@ const restrictAgent = guard(async (d) => {
   const c = await latestClarification(d.agentName);
   if (!c || !["Clarification Received", "Verified", "Restriction Approved"].includes(c.status))
     throw new Error("Request manager clarification and record the outcome (Received or Verified) before restricting.");
-  const lastO = (await listAll("offenses")).filter((o) => o.agentName === d.agentName && o.level === 3).sort((x, y) => (y.at || "").localeCompare(x.at || ""))[0];
+  const lastO = (await listAll("offenses")).filter((o) => o.agentName === d.agentName && o.level === 3 && isActiveOff(o)).sort((x, y) => (y.at || "").localeCompare(x.at || ""))[0];
   const rid = "RST-" + Date.now();
   await setDoc(doc(db, "restrictions", rid), { id: rid, agentName: d.agentName, at: Timestamp.now(), by: d.admin, reason, active: true,
     offenseId: lastO ? lastO.id : null, clarificationId: c.id, removedAt: null, removedBy: null, removeReason: "" });
@@ -979,6 +1057,7 @@ export async function api(payload) {
       case "logBackfill": return await logBackfill(payload);
       case "reviewFlag": return await reviewFlag(payload);
       case "imposeOffense": return await imposeOffense(payload);
+      case "reassignOffense": return await reassignOffense(payload);
       case "requestClarification": return await requestClarification(payload);
       case "updateClarification": return await updateClarification(payload);
       case "restrictAgent": return await restrictAgent(payload);
