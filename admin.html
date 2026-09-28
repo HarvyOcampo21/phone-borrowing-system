@@ -2237,7 +2237,7 @@ const ORD=['','1st','2nd','3rd'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDay=t=>new Date(t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
 const MON_FILTERS=[['all','All Agents'],['none','No Flags'],['has','Has Flags'],['overdue','Overdue Flags'],['calls','Call Activity Flags'],['rate','Success Ratio Flags'],['fcall','Call Log / Verification'],['fovd','Overdue Return'],['fboth','Both / Multiple Flags'],['o1','1st Offense'],['o2','2nd Offense'],['o3','3rd Offense'],['restricted','Restricted Agents']];
-const MON_TEST={all:()=>true,none:s=>!s.pAny,has:s=>s.pAny>0,overdue:s=>s.pOvd>0,calls:s=>s.pCalls>0,rate:s=>s.pRate>0,fcall:s=>s.cCall>0,fovd:s=>s.cOvd>0,fboth:s=>s.cCall>0&&s.cOvd>0,o1:s=>s.lvl===1,o2:s=>s.lvl===2,o3:s=>s.lvl===3,restricted:s=>s.restricted};
+const MON_TEST={all:()=>true,none:s=>!s.pAny,has:s=>s.pAny>0,overdue:s=>s.pOvd>0,calls:s=>s.cCallAct>0,rate:s=>s.pRate>0,fcall:s=>s.cCall>0,fovd:s=>s.cOvd>0,fboth:s=>s.cCall>0&&s.cOvd>0,o1:s=>s.lvl===1,o2:s=>s.lvl===2,o3:s=>s.lvl===3,restricted:s=>s.restricted};
 const REASON_LABEL={CALL_LOG_VERIFICATION:'Call Log / Verification',OVERDUE_RETURN:'Overdue Return'};
 const REASON_OF_TYPE={overdue:'OVERDUE_RETURN',mismatch:'CALL_LOG_VERIFICATION',calls:'CALL_LOG_VERIFICATION',rate:'CALL_LOG_VERIFICATION'};
 const reasonOf=f=>f.flagReason||REASON_OF_TYPE[f.type]||'';
@@ -2301,8 +2301,9 @@ function agState(a){
   const ovd=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed').length,ovdPot=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed'&&!(f.status==='pending'&&f.source==='HISTORICAL')).length,lvl=a.offenseLevel||0,thr=mon.config.overdueThresholds;
   let pot=0;for(let k=1;k<=3;k++)if(ovdPot>=thr[k-1])pot=k;  // unreviewed historical flags never imply an offense
   const actF=fl.filter(f=>f.status==='pending'||(f.status==='confirmed'&&!f.offenseLevel));
+  const cCallAct=fl.filter(f=>(f.type==='calls'||f.type==='mismatch')&&f.status!=='dismissed').length;
   const lvlOvd=trackLvl(a.name,'OVERDUE_RETURN'),lvlCall=trackLvl(a.name,'CALL_LOG_VERIFICATION');
-  return {fl,ovd,lvl,lvlOvd,lvlCall,cOvd:actF.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length,cCall:actF.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length,pot:pot>lvlOvd?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
+  return {fl,ovd,lvl,lvlOvd,lvlCall,cCallAct,cOvd:actF.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length,cCall:actF.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length,pot:pot>lvlOvd?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
 }
 
 async function loadMonitoring(){
@@ -2365,7 +2366,7 @@ function renderMonitoring(){
     <td style="font-weight:500">${esc(a.name)}<div style="font-size:.68rem;color:var(--muted)">${esc(a.team||'No team')}</div></td>
     <td>${s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">Active</span>'}</td>
     <td>${s.ovd}${s.pOvd?` <span class="tag tag-overdue">${s.pOvd} to review</span>`:''}</td>
-    <td>${yn(s.pCalls)}</td><td>${yn(s.pRate)}</td>
+    <td>${yn(s.cCallAct)}</td><td>${yn(s.pRate)}</td>
     <td>${lvlText(s)}${s.pot?` <span class="tag tag-overdue">Potential ${ORD[s.pot]}</span>`:''}</td>
     <td><button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open dashboard</button></td></tr>`).join('')
     :'<tr class="empty-row"><td colspan="7">No agents match this filter.</td></tr>';
@@ -2575,9 +2576,9 @@ function renderCompliance(name){
   const activeOffs=offs.filter(isActOff),sup=offs.filter(o=>!isActOff(o));
   const chainBtns=o=>o.flagId&&flagOf(o.flagId)?`<div class="mon-btns" style="margin-top:4px">${linkBtns(flagOf(o.flagId))}</div>`:'';
   const stepsFor=reason=>[1,2,3].map(k=>{const o=activeOffs.find(x=>x.level===k&&offReason(x)===reason);
-    return o?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b>${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.previousOffenseId?' <span class="tag tag-active">Reassigned</span>':''}
+    return o?`<details class="off-step" style="display:block"><summary style="cursor:pointer"><span style="margin-right:6px">✓</span><b>${ORD[k]} Offense</b> <span style="color:var(--muted);font-size:.78rem">— ${esc(offIncident(o))} · ${esc(REASON_LABEL[offReason(o)]||'')} · click to show</span></summary><div style="margin:6px 0 0 20px">${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.previousOffenseId?' <span class="tag tag-active">Reassigned</span>':''}
         <br>Incident: ${esc(offIncident(o))}${offFlagRef(o)}<br>Violation: ${esc(REASON_LABEL[offReason(o)]||'—')}${o.sourceRecordId?' · Source record: '+esc(o.sourceRecordId):''}<br>Incident Date: <b>${fmt(offIncidentAt(o))}</b>
-        <br>Assigned: ${fmt(o.at)}<br>Assigned By: ${esc(o.admin)}<br>Reason: <b>${esc(REASON_LABEL[offReason(o)]||o.reason)}</b>${REASON_LABEL[offReason(o)]&&o.reason&&o.reason!==REASON_LABEL[offReason(o)]?' — '+esc(o.reason):''}${o.notes?'<br>Notes: '+esc(o.notes):''}${chainBtns(o)}</div></div>`
+        <br>Assigned: ${fmt(o.at)}<br>Assigned By: ${esc(o.admin)}<br>Reason: <b>${esc(REASON_LABEL[offReason(o)]||o.reason)}</b>${REASON_LABEL[offReason(o)]&&o.reason&&o.reason!==REASON_LABEL[offReason(o)]?' — '+esc(o.reason):''}${o.notes?'<br>Notes: '+esc(o.notes):''}${chainBtns(o)}</div></details>`
     :legacyLevels(name).includes(k)?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Recorded before offense records were kept — no linked flag</div></div>`
     :`<div class="off-step" style="color:var(--muted)"><span>○</span><div><b>${ORD[k]} Offense</b><br>Not yet imposed</div></div>`;}).join('');
   const steps=[['OVERDUE_RETURN','Overdue Return'],['CALL_LOG_VERIFICATION','Call Log / Verification']].map(([r,l])=>`<div style="font-weight:600;font-size:.8rem;margin:10px 0 2px">${l} offenses <span style="font-weight:400;color:var(--muted)">— counted separately</span></div>${stepsFor(r)}`).join('');
@@ -2589,7 +2590,7 @@ function renderCompliance(name){
       ${open?`<div class="mon-btns" style="margin-top:4px">${st==='Pending Clarification'?cbtn(c,'Clarification Received','Mark Received'):''}${st!=='Verified'?cbtn(c,'Verified','Mark Verified'):''}${cbtn(c,'Rejected','Mark Rejected')}</div><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Records the manager's response, timestamped with your name. Uses the notes field below if filled.</div>`:''}</div></div>`;}).join(''):'<div style="font-size:.8rem;color:var(--muted)">Not requested.</div>';
   body.innerHTML=`<div class="mon-summary">${cell('Status',s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">ACTIVE</span>')}${cell('Offense level',lvlText(s))}
     ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clar.status):'Not requested')}
-    ${cell('Overdue count',s.ovd)}${cell('Call activity flag',yn(s.pCalls))}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
+    ${cell('Overdue count',s.ovd)}${cell('Call activity flag',s.cCallAct)}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
     ${alerts.length?`<div class="mon-alert">${alerts.map(esc).join('<br>')}</div>`:''}
     ${reconcile(name,s)}${secH('Active flags')}<div style="font-size:.78rem;margin-bottom:8px">Overdue Return: <b>${s.cOvd}</b> · Call Log / Verification: <b>${s.cCall}</b> · Total flags: <b>${active.length}</b></div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
     ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Reviewed flags — ${dism.length} flag${dism.length>1?'s':''} (dismissed or already turned into an offense)</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
@@ -2614,7 +2615,7 @@ function renderCompliance(name){
   });
   ev.sort(byAsc('t'));
   const tl=document.getElementById('compTimeline');
-  if(tl)tl.innerHTML=secH('Compliance timeline')+(ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · Admin: '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>');
+  if(tl){const wasOpen=!!tl.querySelector('details[open]');tl.innerHTML=`<details${wasOpen?' open':''}><summary style="cursor:pointer">${secH('Compliance timeline — '+ev.length+' event'+(ev.length!==1?'s':'')+' (click to show / hide)').replace('class="mon-sec"','class="mon-sec" style="display:inline-block"')}</summary>`+(ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · Admin: '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>')+'</details>';}
   const dis=(id,v)=>{document.getElementById(id).disabled=v;};
   dis('btnClar',s.lvl<3||openClar);dis('btnRestrict',!eligible||!clarOk);dis('btnUnrestrict',!s.restricted);
   document.getElementById('monHint').textContent=eligible&&!clarOk?(clar?'Restriction unlocks once the clarification is marked Received or Verified.':'Restriction unlocks after a manager clarification is requested and received.'):'';
