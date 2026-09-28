@@ -2433,7 +2433,7 @@ function reconcile(name,s){
   const R=reconData(name,s),missing=R.missing.length;
   return `<div class="mon-sec">Reconciliation with existing records (all time)</div><div style="font-size:.78rem;line-height:1.6">
     Borrowing records: Flagged <b>${R.nF}</b> · Overdue returns <b>${R.nO}</b> → Compliance flags: Call Log / Verification <b>${s.fl.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length}</b> · Overdue Return <b>${s.fl.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length}</b>${s.fl.some(f=>f.source==='HISTORICAL')?` (${s.fl.filter(f=>f.source==='HISTORICAL').length} historical)`:''}<br>
-    ${missing?`<span style="color:var(--red)">⚠ ${missing} of these record${missing>1?'s have':' has'} no compliance flag yet.</span> <button class="btn btn-warn" onclick="runBackfill()" type="button">Backfill Historical Flags</button>`:'✓ Every flagged or overdue record has a compliance flag.'}</div>`;
+    ${missing?`<span style="color:var(--red)">⚠ ${missing} of these record${missing>1?'s have':' has'} no compliance flag yet.</span> <button class="btn btn-warn" onclick="runBackfill(true)" type="button">Backfill Historical Flags</button>`:'✓ Every flagged or overdue record has a compliance flag.'}</div>`;
 }
 
 // FLAG HISTORY — every flag with its exact original date + time and its offense control.
@@ -2637,13 +2637,15 @@ function renderBackfill(res){
       Agents scanned: ${last.agents}<br>Records scanned: ${last.records}<br>Historical flags created: ${last.created}<br>Existing flags skipped: ${last.skipped}<br>Duplicates prevented: ${last.dupPrevented}</div>`:'');
 }
 let backfilling=false;
-async function runBackfill(){
+async function runBackfill(scoped){ // scoped===true → only the agent currently open in the dashboard; otherwise every agent (Monitoring settings)
   if(backfilling)return;
-  const cand=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).sort((x,y)=>x.occurredAt.localeCompare(y.occurredAt));
-  const summary={agents:new Set(cacheRecords.map(r=>r['Agent Name'])).size,records:cacheRecords.length,created:0,skipped:detectSkipped,dupPrevented:0};
+  const only=scoped===true?selectedAgentDash:null;
+  const cand=detectFlags(true).filter(f=>(f.source==='HISTORICAL'||f.recordId)&&(!only||f.agentName===only)).sort((x,y)=>x.occurredAt.localeCompare(y.occurredAt));
+  const scope=only?cacheRecords.filter(r=>r['Agent Name']===only):cacheRecords;
+  const summary={agents:only?1:new Set(cacheRecords.map(r=>r['Agent Name'])).size,records:scope.length,created:0,skipped:detectSkipped,dupPrevented:0};
   if(!cand.length){renderBackfill({...summary,admin:currentAdminUsername});return toast('Nothing to backfill — existing records already have flags.','info');}
   const by={};cand.forEach(f=>{by[f.type]=(by[f.type]||0)+1;});
-  if(!confirm(`Backfill historical flags?\n\nRecords scanned: ${summary.records}\nNew historical flags: ${cand.length} (${Object.entries(by).map(([k,v])=>`${FLAG_LABEL[k]||k}: ${v}`).join(', ')})\nAlready flagged, skipped: ${summary.skipped}\n\nEvery new flag starts as Pending Admin Review, dated from the original record. No offenses or restrictions are applied and no borrowing records are changed.`))return;
+  if(!confirm(`Backfill historical flags for ${only?only:'ALL AGENTS'}?\n\nRecords scanned: ${summary.records}\nNew historical flags: ${cand.length} (${Object.entries(by).map(([k,v])=>`${FLAG_LABEL[k]||k}: ${v}`).join(', ')})\nAlready flagged, skipped: ${summary.skipped}\n\nEvery new flag starts as Pending Admin Review, dated from the original record. No offenses or restrictions are applied and no borrowing records are changed.`))return;
   backfilling=true;const btn=document.getElementById('btnBackfill');
   try{
     for(let i=0;i<cand.length;i+=40){
