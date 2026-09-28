@@ -864,7 +864,10 @@ const reviewFlag = guard(async (d) => {
 // record) that caused it. agents/{slug}.offenseLevel is only a cache: it is always recomputed as the
 // highest ACTIVE offense record. A record is never deleted — reassigning/withdrawing marks it
 // status:"superseded" (who/when/why) and, if reassigned, creates a new linked record.
-const ORD_API = ["", "1st", "2nd", "3rd"];
+// Offense numbers are no longer capped at 3: after a restriction is lifted the next offense is the 4th, then 5th, ...
+const MAX_OFFENSE = 20;
+const ORD_API = new Proxy({}, { get: (_, k) => { const n = Number(k); if (!Number.isInteger(n) || n < 1) return ""; const t = n % 100;
+  return n + ((t >= 11 && t <= 13) ? "th" : ({ 1: "st", 2: "nd", 3: "rd" })[n % 10] || "th"); } });
 const isActiveOff = (o) => o.status !== "superseded";
 // Offenses are counted SEPARATELY per violation type (Overdue Return vs Call Log / Verification):
 // each type has its own 1st / 2nd / 3rd. agents/{slug}.offenseLevel caches the highest level across types.
@@ -878,7 +881,28 @@ function takenLevels(all, cached, excludeId, reason) {
 }
 // Highest active level across ALL types (what the agent-level cache stores).
 const overallLevel = (all, cached, excludeId, extra) => Math.max(0, extra || 0, ...all.filter((o) => isActiveOff(o) && o.id !== excludeId).map((o) => o.level), ...legacyLevels(all, cached));
-const nextFree = (taken) => [1, 2, 3].find((k) => !taken.includes(k)) || 0;
+const nextFree = (taken) => { for (let k = 1; k <= MAX_OFFENSE; k++) if (!taken.includes(k)) return k; return 0; };
+
+// RESTRICTION TRIGGER. An agent becomes eligible for restriction when they hold an ACTIVE offense of level 3 or
+// higher that no earlier restriction has already "used". Removing a restriction does NOT reset offense counts, but
+// it does use up the offenses that caused it — so the agent needs a NEW offense (4th, 5th, ...) to be eligible again.
+// A reassigned offense (new record linked by previousOffenseId) inherits "already used" from the record it replaced.
+function usedOffenseIds(offs, rests) {
+  const used = new Set();
+  rests.forEach((r) => { if (r.offenseId) used.add(r.offenseId); (r.offenseIds || []).forEach((i) => used.add(i)); });
+  for (let changed = true; changed;) { changed = false;
+    offs.forEach((o) => { if (!used.has(o.id) && o.previousOffenseId && used.has(o.previousOffenseId)) { used.add(o.id); changed = true; } }); }
+  return used;
+}
+function restrictionTrigger(offs, rests, cached) {
+  const used = usedOffenseIds(offs, rests);
+  const fresh = offs.filter((o) => isActiveOff(o) && o.level >= 3 && !used.has(o.id))
+    .sort((x, y) => (y.level - x.level) || (y.at || "").localeCompare(x.at || ""));
+  if (fresh.length) return { level: fresh[0].level, top: fresh[0], offenses: fresh, legacy: false };
+  // Legacy: agent doc claims level 3+ but no offense record exists, and they were never restricted.
+  if (!rests.length && legacyLevels(offs, cached).some((k) => k >= 3)) return { level: 3, top: null, offenses: [], legacy: true };
+  return { level: 0, top: null, offenses: [], legacy: false };
+}
 const incidentLabel = (fd) => (fd.data && fd.data.Unit ? "Unit " + fd.data.Unit : fd.detail || fd.type || "");
 
 const imposeOffense = guard(async (d) => {
@@ -890,7 +914,7 @@ const imposeOffense = guard(async (d) => {
   const aref = doc(db, "agents", slug(agentName));
   const fref = d.flagId ? doc(db, "flags", d.flagId) : null;
   const level = Number(d.level), oid = "OFF-" + Date.now();
-  if (!(level >= 1 && level <= 3)) throw new Error("Choose the 1st, 2nd or 3rd offense.");
+  if (!(level >= 1 && level <= MAX_OFFENSE)) throw new Error("Choose a valid offense number (1st to " + ORD_API[MAX_OFFENSE] + ").");
   const all = (await listAll("offenses")).filter((o) => o.agentName === agentName);
   let prev, fd = {}, wasPending = false;
   await runTransaction(db, async (tx) => {
@@ -941,7 +965,7 @@ const reassignOffense = guard(async (d) => {
   const reason = need(d.reason, "A reason is required to change an offense.");
   const agentName = need(d.agentName, "Missing agent.");
   const level = Number(d.level || 0);
-  if (!(level >= 0 && level <= 3)) throw new Error("Choose No Offense, 1st, 2nd or 3rd.");
+  if (!(level >= 0 && level <= MAX_OFFENSE)) throw new Error("Choose No Offense or a valid offense number.");
   const aref = doc(db, "agents", slug(agentName)), fref = doc(db, "flags", need(d.flagId, "Missing flag."));
   const all = (await listAll("offenses")).filter((o) => o.agentName === agentName);
   const oid = "OFF-" + Date.now();
@@ -1016,25 +1040,34 @@ const restrictAgent = guard(async (d) => {
   const ref = doc(db, "agents", slug(need(d.agentName, "Missing agent.")));
   const s = await getDoc(ref);
   if (!s.exists()) throw new Error("Agent not found.");
-  if ((s.data().offenseLevel || 0) < 3) throw new Error("An agent needs a confirmed 3rd offense before restriction.");
   if (s.data().restricted) throw new Error("Agent is already restricted.");
+  const allOffs = (await listAll("offenses")).filter((o) => o.agentName === d.agentName);
+  const allRests = (await listAll("restrictions")).filter((r) => r.agentName === d.agentName);
+  const trig = restrictionTrigger(allOffs, allRests, s.data().offenseLevel || 0);
+  if (!trig.level) throw new Error(allRests.length
+    ? "This agent has no new offense since their last restriction. A new offense (the next number in sequence) is needed before they can be restricted again."
+    : "An agent needs a confirmed 3rd offense before restriction.");
+  const top = trig.top, topReason = top ? offReasonOf(top) : null;
+  const offenseLabel = ORD_API[trig.level] + " " + (topReason ? FLAG_REASONS[topReason] + " " : "") + "offense";
+  const offenseInfo = { offenseLevel: trig.level, offenseReason: topReason, offenseLabel, offenseIncident: top ? (top.incidentLabel || "") : "" };
   // The manager is notified automatically: a clarification waits for their Cleared click.
   let c = await latestClarification(d.agentName);
   if (!c || !CLAR_PENDING.includes(c.status)) {
     const team = s.data().team ? await getDoc(doc(db, "teams", slug(s.data().team))) : null;
     const cid = "CLR-" + Date.now();
     c = { id: cid, agentName: d.agentName, manager: team && team.exists() ? team.data().manager || "" : "", reason,
-      requestedAt: Timestamp.now(), requestedBy: d.admin, status: "Pending Clarification", notes: d.notes || "" };
+      requestedAt: Timestamp.now(), requestedBy: d.admin, status: "Pending Clarification", notes: d.notes || "", ...offenseInfo };
     await setDoc(doc(db, "clarifications", cid), c);
-  }
-  const lastO = (await listAll("offenses")).filter((o) => o.agentName === d.agentName && o.level === 3 && isActiveOff(o)).sort((x, y) => (y.at || "").localeCompare(x.at || ""))[0];
+  } else await updateDoc(doc(db, "clarifications", c.id), offenseInfo);
   const rid = "RST-" + Date.now();
+  // offenseIds = every offense this restriction "uses up"; a later restriction needs a newer offense.
   await setDoc(doc(db, "restrictions", rid), { id: rid, agentName: d.agentName, at: Timestamp.now(), by: d.admin, reason, active: true,
-    offenseId: lastO ? lastO.id : null, clarificationId: c.id, removedAt: null, removedBy: null, removeReason: "" });
+    offenseId: top ? top.id : null, offenseIds: trig.offenses.map((o) => o.id), ...offenseInfo,
+    clarificationId: c.id, removedAt: null, removedBy: null, removeReason: "" });
   await updateDoc(ref, { restricted: true, restrictionReason: reason, restrictedAt: Timestamp.now(), restrictedBy: d.admin, restrictionId: rid });
   await updateDoc(doc(db, "clarifications", c.id), { restrictionId: rid });
   await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Agent restricted", admin: d.admin, reason, notes: d.notes,
-    prevLevel: 3, newLevel: 3, restrictionStatus: "Restricted", clarificationStatus: "Pending Clarification" });
+    prevLevel: trig.level, newLevel: trig.level, offenseLabel, restrictionStatus: "Restricted", clarificationStatus: "Pending Clarification" });
   return { success: true, message: d.agentName + " is now restricted." };
 });
 
