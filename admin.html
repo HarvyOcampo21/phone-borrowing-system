@@ -2714,19 +2714,16 @@ const monAct=action=>monCall({action});
 function monFlag(flagId,act){return monCall({action:'reviewFlag',flagId,decision:act});} // confirm / dismiss only — offenses are assigned through the confirmation modal
 
 // ── MANAGER: clearance box on the dashboard ──
-function renderMgrClear(){
+function renderMgrClear(){ // shown only while at least one agent is waiting for this manager's clearance; cleared agents are tracked in the agent's compliance section
   const box=document.getElementById('mgrClearBox');if(!box)return;
-  if(!isMgr()){box.style.display='none';return;}
-  const rows=cacheAgents.filter(a=>a.restricted).map(a=>({a,c:latestClar(a.name)}));
-  const wait=rows.filter(x=>clarState(x.c)==='pending'),done=rows.filter(x=>clarState(x.c)==='cleared');
-  const line=({a,c},btn)=>`<div class="mgr-row"><div><b>${esc(a.name)}</b> <span style="color:var(--muted);font-size:.78rem">${esc(a.team||'')}</span>
-    <div class="mgr-sub">Restricted ${fmt(a.restrictedAt)}${a.restrictedBy?' by '+esc(a.restrictedBy):''}${a.restrictionReason?' — '+esc(a.restrictionReason):''}${btn?'':`<br>Cleared ${fmt(c.clearedAt)} — waiting for an admin to remove the restriction`}</div></div>
-    <div class="mon-btns" style="margin:0">${btn?`<button class="btn btn-verify" data-a="${esc(a.name)}" onclick="openClearModal(this.dataset.a)" type="button">Cleared</button>`:''}<button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open</button></div></div>`;
+  const wait=isMgr()?cacheAgents.filter(a=>a.restricted&&clarState(latestClar(a.name))==='pending'):[];
+  if(!wait.length){box.style.display='none';box.innerHTML='';return;}
+  const line=a=>`<div class="mgr-row"><div><b>${esc(a.name)}</b> <span style="color:var(--muted);font-size:.78rem">${esc(a.team||'')}</span>
+    <div class="mgr-sub">Restricted ${fmt(a.restrictedAt)}${a.restrictedBy?' by '+esc(a.restrictedBy):''}${a.restrictionReason?' — '+esc(a.restrictionReason):''}</div></div>
+    <div class="mon-btns" style="margin:0"><button class="btn btn-verify" data-a="${esc(a.name)}" onclick="openClearModal(this.dataset.a)" type="button">Cleared</button><button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open</button></div></div>`;
   box.style.display='';
-  box.innerHTML=`<div class="card-title">Agents waiting for your clearance${wait.length?` <span class="tag tag-flagged">${wait.length}</span>`:''}</div>`
-    +(wait.length?`<div style="font-size:.78rem;color:var(--muted);margin-bottom:4px">Click <b>Cleared</b> once the agent has spoken to you and cleared their name. An admin then removes the restriction.</div>`+wait.map(x=>line(x,true)).join('')
-      :'<div style="font-size:.8rem;color:var(--muted)">No agents on your teams are waiting for clearance.</div>')
-    +(done.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Cleared — waiting for an admin (${done.length})</summary>${done.map(x=>line(x,false)).join('')}</details>`:'');
+  box.innerHTML=`<div class="card-title">Agents waiting for your clearance <span class="tag tag-flagged">${wait.length}</span></div>`
+    +`<div style="font-size:.78rem;color:var(--muted);margin-bottom:4px">Click <b>Cleared</b> once the agent has spoken to you and cleared their name. An admin then removes the restriction.</div>`+wait.map(line).join('');
 }
 function openClearModal(name){
   openMonModal('Mark '+name+' as cleared',`<div style="font-size:.85rem;line-height:1.6">Confirm that <b>${esc(name)}</b> has spoken to you and cleared their name. This tells the admins the restriction can be lifted. It does not lift it yourself.</div>
