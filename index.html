@@ -717,6 +717,12 @@
         <span id="liveLabel">Live</span>
       </div>
 
+      <div class="notice warn" id="restrictedNotice" style="flex-direction:column;gap:4px">
+        <div><span>🚫</span> <b>Your account is restricted</b></div>
+        <div id="restrictedNoticeReason" style="font-weight:500"></div>
+        <div id="restrictedNoticeHelp" style="font-weight:500"></div>
+      </div>
+
       <div class="notice warn" id="lockedNotice">
         <span>⚠️</span>
         <span id="lockedNoticeText"></span>
@@ -1117,6 +1123,22 @@
         document.getElementById("returnBar").classList.toggle("show", locked);
         const lockedNotice = document.getElementById("lockedNotice");
         lockedNotice.classList.remove("show");
+
+        // Restricted agents see why, and every unit is greyed out until an
+        // admin lifts the restriction. (A phone they already hold can still be returned.)
+        const restricted = !!(currentAgent && currentAgent.restricted);
+        const rn = document.getElementById("restrictedNotice");
+        rn.classList.toggle("show", restricted);
+        if (restricted) {
+          const when = currentAgent.restrictedAt
+            ? " (since " + new Date(currentAgent.restrictedAt).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" }) + ")"
+            : "";
+          document.getElementById("restrictedNoticeReason").innerHTML =
+            "Reason: " + escapeHtml(currentAgent.restrictionReason || "No reason recorded.") + escapeHtml(when);
+          document.getElementById("restrictedNoticeHelp").textContent = locked
+            ? "You can still return the phone you have. You can't borrow another until the restriction is lifted."
+            : "All units are unavailable until this is settled. Please speak with your manager or an admin.";
+        }
         document.getElementById("returnBadge").classList.remove("show");
 
         if (locked) {
@@ -1168,7 +1190,7 @@
               cls += " cell-mine";
               label = "Borrowed";
               dotClass = "dot-deployed";
-            } else if (locked || st.state === "held") {
+            } else if (locked || restricted || st.state === "held") {
               cls += " cell-locked";
               label = "Unavailable";
               dotClass = "dot-locked";
@@ -1215,6 +1237,11 @@
           } else {
             toast("Return your current phone before borrowing another.", "error");
           }
+          return;
+        }
+
+        if (currentAgent && currentAgent.restricted) {
+          toast("Your account is restricted. Please speak with your manager or an admin.", "error");
           return;
         }
 
@@ -1399,7 +1426,7 @@
         const pending = pendingUnitAfterLogin;
         pendingUnitAfterLogin = null;
         pendingAgentNameForPinSetup = null;
-        if (pending && !currentAgent.activeBorrowUnit) {
+        if (pending && !currentAgent.activeBorrowUnit && !currentAgent.restricted) {
           const p = allPhones.find((x) => String(x.unitNo) === String(pending));
           if (p && p.available) openBorrow(p);
         }

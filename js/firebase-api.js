@@ -671,6 +671,9 @@ async function agentLogin(data) {
       email: v.email || "",
       activeBorrowUnit: v.activeBorrowUnit || null,
       activeRecordId: v.activeRecordId || null,
+      restricted: !!v.restricted,
+      restrictionReason: v.restrictionReason || "",
+      restrictedAt: toIso(v.restrictedAt),
     },
   };
 }
@@ -689,6 +692,9 @@ async function getAgent(data) {
       email: v.email || "",
       activeBorrowUnit: v.activeBorrowUnit || null,
       activeRecordId: v.activeRecordId || null,
+      restricted: !!v.restricted,
+      restrictionReason: v.restrictionReason || "",
+      restrictedAt: toIso(v.restrictedAt),
     },
   };
 }
