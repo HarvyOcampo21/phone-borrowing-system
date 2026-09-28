@@ -853,13 +853,18 @@ const reviewFlag = guard(async (d) => {
 // status:"superseded" (who/when/why) and, if reassigned, creates a new linked record.
 const ORD_API = ["", "1st", "2nd", "3rd"];
 const isActiveOff = (o) => o.status !== "superseded";
-// Levels that can't be handed out again: active records, plus "legacy" levels the agent doc claims
-// but that have no record at all (imposed before offense records existed).
-function takenLevels(all, cached, excludeId) {
-  const t = all.filter((o) => isActiveOff(o) && o.id !== excludeId).map((o) => o.level), have = new Set(all.map((o) => o.level));
-  for (let k = 1; k <= cached; k++) if (!have.has(k)) t.push(k);
-  return t;
+// Offenses are counted SEPARATELY per violation type (Overdue Return vs Call Log / Verification):
+// each type has its own 1st / 2nd / 3rd. agents/{slug}.offenseLevel caches the highest level across types.
+const offReasonOf = (o) => o.flagReason || REASON_OF_TYPE[o.violationType] || null;
+// "Legacy" levels: the agent doc claims them but no offense record exists (imposed before records were kept).
+// Their violation type is unknown, so they block that level in every type.
+const legacyLevels = (all, cached) => { const have = new Set(all.map((o) => o.level)), t = []; for (let k = 1; k <= cached; k++) if (!have.has(k)) t.push(k); return t; };
+// Levels that can't be handed out again FOR THIS VIOLATION TYPE.
+function takenLevels(all, cached, excludeId, reason) {
+  return [...all.filter((o) => isActiveOff(o) && o.id !== excludeId && offReasonOf(o) === reason).map((o) => o.level), ...legacyLevels(all, cached)];
 }
+// Highest active level across ALL types (what the agent-level cache stores).
+const overallLevel = (all, cached, excludeId, extra) => Math.max(0, extra || 0, ...all.filter((o) => isActiveOff(o) && o.id !== excludeId).map((o) => o.level), ...legacyLevels(all, cached));
 const nextFree = (taken) => [1, 2, 3].find((k) => !taken.includes(k)) || 0;
 const incidentLabel = (fd) => (fd.data && fd.data.Unit ? "Unit " + fd.data.Unit : fd.detail || fd.type || "");
 
@@ -880,9 +885,6 @@ const imposeOffense = guard(async (d) => {
     const f = fref ? await tx.get(fref) : null;
     if (!a.exists()) throw new Error("Agent not found.");
     prev = a.data().offenseLevel || 0;
-    const taken = takenLevels(all, prev);
-    if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " offense is already assigned. Use Reassign Offense on that flag to move it.");
-    if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are assigned in order (next is the " + ORD_API[nextFree(taken)] + "). Use the sequence override to skip a level.");
     if (fref) {
       if (!f.exists()) throw new Error("Flag not found.");
       fd = f.data();
@@ -893,10 +895,15 @@ const imposeOffense = guard(async (d) => {
       const fr = reasonOf(fd);
       if (fr && flagReason && fr !== flagReason) throw new Error("This flag is " + FLAG_REASONS[fr] + ", not " + FLAG_REASONS[flagReason] + ". The offense reason must match the flag.");
       flagReason = fr || flagReason;
+    }
+    if (!flagReason) throw new Error("Choose the violation type (Call Log / Verification or Overdue Return).");
+    const taken = takenLevels(all, prev, null, flagReason), typeName = FLAG_REASONS[flagReason];
+    if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " " + typeName + " offense is already assigned. Use Reassign Offense on that flag to move it.");
+    if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are counted per violation type. The next " + typeName + " offense is the " + ORD_API[nextFree(taken)] + ". Use the sequence override to skip a level.");
+    if (fref) {
       tx.update(fref, { status: "confirmed", flagReason: flagReason || null, offenseLevel: level, offenseId: oid,
         ...(wasPending ? { reviewedBy: d.admin, reviewedAt: Timestamp.now() } : {}) });
     }
-    if (!flagReason) throw new Error("Choose the violation type (Call Log / Verification or Overdue Return).");
     tx.set(doc(db, "offenses", oid), { id: oid, status: "active", agentName, agentId: slug(agentName), level, offenseNumber: level, prevLevel: prev, flagReason,
       flagId: d.flagId || null, flagNo: fd.flagNo || null, flagRef: fd.flagRef || null,
       sourceRecordId: fd.sourceRecordId || fd.recordId || null,
@@ -937,12 +944,13 @@ const reassignOffense = guard(async (d) => {
     if (!ocur.exists() || ocur.data().status === "superseded") throw new Error("This offense changed in the meantime — refresh and try again.");
     if (level === cur.level) throw new Error("That is already this flag's offense.");
     const cached = a.data().offenseLevel || 0;
-    const taken = takenLevels(all, cached, cur.id);
+    const reasonKey = reasonOf(fd), typeName = FLAG_REASONS[reasonKey] || "this violation type";
+    const taken = takenLevels(all, cached, cur.id, reasonKey);
     if (level > 0) {
-      if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " offense is already assigned to another flag.");
-      if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are assigned in order (next is the " + ORD_API[nextFree(taken)] + "). Use the sequence override to skip a level.");
+      if (taken.includes(level)) throw new Error("The " + ORD_API[level] + " " + typeName + " offense is already assigned to another flag.");
+      if (level !== nextFree(taken) && !d.override) throw new Error("Offenses are counted per violation type. The next " + typeName + " offense is the " + ORD_API[nextFree(taken)] + ". Use the sequence override to skip a level.");
     }
-    newLevel = Math.max(0, ...taken, level);
+    newLevel = overallLevel(all, cached, cur.id, level);
     if (a.data().restricted && newLevel < 3) throw new Error("This agent is restricted. Remove the restriction before lowering the offense level.");
     tx.update(doc(db, "offenses", cur.id), { status: "superseded", supersededAt: Timestamp.now(), supersededBy: d.admin,
       supersededReason: reason, supersededNotes: d.notes || "", replacedById: level ? oid : null, replacedByLevel: level });

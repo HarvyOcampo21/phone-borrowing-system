@@ -2301,7 +2301,8 @@ function agState(a){
   const ovd=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed').length,ovdPot=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed'&&!(f.status==='pending'&&f.source==='HISTORICAL')).length,lvl=a.offenseLevel||0,thr=mon.config.overdueThresholds;
   let pot=0;for(let k=1;k<=3;k++)if(ovdPot>=thr[k-1])pot=k;  // unreviewed historical flags never imply an offense
   const actF=fl.filter(f=>f.status==='pending'||(f.status==='confirmed'&&!f.offenseLevel));
-  return {fl,ovd,lvl,cOvd:actF.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length,cCall:actF.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length,pot:pot>lvl?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
+  const lvlOvd=trackLvl(a.name,'OVERDUE_RETURN'),lvlCall=trackLvl(a.name,'CALL_LOG_VERIFICATION');
+  return {fl,ovd,lvl,lvlOvd,lvlCall,cOvd:actF.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length,cCall:actF.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length,pot:pot>lvlOvd?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
 }
 
 async function loadMonitoring(){
@@ -2365,7 +2366,7 @@ function renderMonitoring(){
     <td>${s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">Active</span>'}</td>
     <td>${s.ovd}${s.pOvd?` <span class="tag tag-overdue">${s.pOvd} to review</span>`:''}</td>
     <td>${yn(s.pCalls)}</td><td>${yn(s.pRate)}</td>
-    <td>${s.lvl?ORD[s.lvl]+' Offense':'None'}${s.pot?` <span class="tag tag-overdue">Potential ${ORD[s.pot]}</span>`:''}</td>
+    <td>${lvlText(s)}${s.pot?` <span class="tag tag-overdue">Potential ${ORD[s.pot]}</span>`:''}</td>
     <td><button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open dashboard</button></td></tr>`).join('')
     :'<tr class="empty-row"><td colspan="7">No agents match this filter.</td></tr>';
 }
@@ -2390,12 +2391,18 @@ const offIncidentAt=o=>o.incidentAt||(flagOf(o.flagId)?fdate(flagOf(o.flagId)):'
 const offFlagRef=o=>{const f=flagOf(o.flagId),r=f?flagRef(f):o.flagRef||(o.flagNo?pad(o.flagNo):'');return r?' · Flag #'+r:'';};
 const curOff=f=>mon.offenses.find(o=>isActOff(o)&&(o.id===f.offenseId||(!f.offenseId&&o.flagId===f.id)));
 // Levels that can't be handed out again (active records + legacy levels with no record). Server re-checks.
-function takenLevels(name,excludeId){
-  const all=mon.offenses.filter(o=>o.agentName===name),a=cacheAgents.find(x=>x.name===name),have=new Set(all.map(o=>o.level));
-  const t=all.filter(o=>isActOff(o)&&o.id!==excludeId).map(o=>o.level);
+// Offenses are counted SEPARATELY per violation type (Overdue Return vs Call Log / Verification).
+// Legacy levels (agent doc says level N but no record exists) have an unknown type, so they block that level in both.
+function legacyLevels(name){
+  const all=mon.offenses.filter(o=>o.agentName===name),a=cacheAgents.find(x=>x.name===name),have=new Set(all.map(o=>o.level)),t=[];
   for(let k=1;k<=((a&&a.offenseLevel)||0);k++)if(!have.has(k))t.push(k);
   return t;
 }
+function takenLevels(name,excludeId,reason){
+  return [...mon.offenses.filter(o=>o.agentName===name&&isActOff(o)&&o.id!==excludeId&&offReason(o)===reason).map(o=>o.level),...legacyLevels(name)];
+}
+const trackLvl=(name,reason)=>Math.max(0,...takenLevels(name,null,reason));
+const lvlText=s=>(s.lvlOvd||s.lvlCall)?[s.lvlOvd?'Overdue: '+ORD[s.lvlOvd]:'',s.lvlCall?'Call Log: '+ORD[s.lvlCall]:''].filter(Boolean).join(' · '):'None';
 const nextFree=t=>[1,2,3].find(k=>!t.includes(k))||0;
 const secH=(t,id)=>`<div class="mon-sec"${id?` id="${id}"`:''}>${t}</div>`;
 const linkBtns=(f)=>`<button class="btn btn-info" data-f="${esc(f.id)}" onclick="viewFlag(this.dataset.f)" type="button">View Flag</button> <button class="btn btn-info" data-f="${esc(f.id)}" onclick="viewFlag(this.dataset.f,true)" type="button">View Original Record</button>`;
@@ -2441,7 +2448,7 @@ function offCtl(f){
   if(f.status==='dismissed')return '<span class="fh-mut">Dismissed — no offense</span>';
   const cur=curOff(f);
   if(cur)return `<b>${ORD[cur.level]} Offense</b><div class="fh-mut">Assigned ${fmt(cur.at)} by ${esc(cur.admin)}</div><button class="btn btn-warn" data-f="${esc(f.id)}" onclick="openOffModal(this.dataset.f,'reassign')" type="button">Reassign Offense</button>`;
-  const taken=takenLevels(f.agentName);
+  const taken=takenLevels(f.agentName,null,reasonOf(f));
   return `<div class="fh-mut">Assign Offense</div><select class="fh-sel" data-f="${esc(f.id)}" onchange="pickOffense(this)"><option value="0">No Offense</option>${[1,2,3].map(k=>`<option value="${k}"${taken.includes(k)?' disabled':''}>${ORD[k]} Offense${taken.includes(k)?' (already assigned)':''}</option>`).join('')}</select>`;
 }
 function flagHistory(name,s){
@@ -2489,21 +2496,21 @@ function pickOffense(sel){const v=+sel.value;if(v)openOffModal(sel.dataset.f,'as
 function openOffModal(flagId,mode,level){
   const f=flagOf(flagId);if(!f)return;
   offM={flagId,mode,level:level||0,reason:'',notes:'',override:false};
-  if(mode==='reassign'){const cur=curOff(f);if(!cur)return;const taken=takenLevels(f.agentName,cur.id);
+  if(mode==='reassign'){const cur=curOff(f);if(!cur)return;const taken=takenLevels(f.agentName,cur.id,reasonOf(f));
     offM.curId=cur.id;offM.level=[1,2,3].find(k=>k!==cur.level&&!taken.includes(k))||0;}
   showOffModal();
 }
 function offPick(v){const re=document.getElementById('offReason');offM.reason=re?re.value:'';offM.notes=document.getElementById('offNotes').value;const o=document.getElementById('offOverride');offM.override=!!(o&&o.checked);offM.level=+v;showOffModal();}
 function showOffModal(){
   const m=offM,f=flagOf(m.flagId),cur=m.curId?mon.offenses.find(o=>o.id===m.curId):null,lvl=m.level;
-  const taken=takenLevels(f.agentName,cur&&cur.id),skip=lvl>0&&lvl!==nextFree(taken);
+  const taken=takenLevels(f.agentName,cur&&cur.id,reasonOf(f)),skip=lvl>0&&lvl!==nextFree(taken);
   const row=(l,v)=>`<div class="flag-row"><span>${l}</span><div>${v}</div></div>`;
   const opts=[0,1,2,3].filter(k=>!cur||k!==cur.level).map(k=>`<option value="${k}"${k===lvl?' selected':''}${k&&taken.includes(k)?' disabled':''}>${k?ORD[k]+' Offense'+(taken.includes(k)?' (already assigned)':''):'No Offense (withdraw)'}</option>`).join('');
   const label=m.mode==='assign'?`Confirm ${ORD[lvl]} Offense`:lvl?'Confirm Reassignment':'Confirm — Withdraw Offense';
   openMonModal(m.mode==='assign'?`Assign ${ORD[lvl]} Offense`:'Reassign Offense',`
     ${row('Agent',esc(f.agentName))}${row('Flag',`#${flagRef(f)} · ${flagTitle(f)} · ${esc(incident(f))}`)}${row('Original incident',`<b>${fmt(fdate(f))}</b>`)}${(f.recordId||f.sourceRecordId)?row('Source record',esc(f.recordId||f.sourceRecordId)):''}
-    ${m.mode==='assign'?row('New offense',`<b>${ORD[lvl]} Offense</b>`):row('Current',`<b>${ORD[cur.level]} Offense</b> · assigned ${fmt(cur.at)} by ${esc(cur.admin)}`)+`<div class="flag-row"><span>New</span><div><select id="offNewLvl" onchange="offPick(this.value)">${opts}</select></div></div>`}
-    ${skip?`<label style="display:flex;gap:6px;align-items:center;font-weight:500;margin:10px 0 0;font-size:.78rem"><input type="checkbox" id="offOverride" style="width:auto"${m.override?' checked':''}/> Sequence override — the next offense in order is the ${ORD[nextFree(taken)]||'—'}; this skips a level</label>`:''}
+    ${m.mode==='assign'?row('New offense',`<b>${ORD[lvl]} ${esc(REASON_LABEL[reasonOf(f)]||'')} Offense</b>`):row('Current',`<b>${ORD[cur.level]} Offense</b> · assigned ${fmt(cur.at)} by ${esc(cur.admin)}`)+`<div class="flag-row"><span>New</span><div><select id="offNewLvl" onchange="offPick(this.value)">${opts}</select></div></div>`}
+    ${skip?`<label style="display:flex;gap:6px;align-items:center;font-weight:500;margin:10px 0 0;font-size:.78rem"><input type="checkbox" id="offOverride" style="width:auto"${m.override?' checked':''}/> Sequence override — the next ${esc(REASON_LABEL[reasonOf(f)]||'')} offense in order is the ${ORD[nextFree(taken)]||'—'}; this skips a level</label>`:''}
     <div class="field" style="margin-top:14px"><label>Violation type (set by the flag)</label><select id="offFlagReason" disabled><option value="">Select Reason</option>${Object.entries(REASON_LABEL).map(([k,l])=>`<option value="${k}"${k===reasonOf(f)?' selected':''}>${l}</option>`).join('')}</select></div>
     <div class="field"><label>${m.mode==='assign'?'Reason for this offense (required)':'Reason for this change (required)'}</label><input type="text" id="offReason" autocomplete="off" value="${esc(m.reason)}"/></div>
     <div class="field"><label>Admin notes</label><textarea id="offNotes" style="min-height:56px">${esc(m.notes)}</textarea></div>
@@ -2567,19 +2574,20 @@ function renderCompliance(name){
   // OFFENSE HISTORY — the full chain: incident → flag → offense → who/when/why
   const activeOffs=offs.filter(isActOff),sup=offs.filter(o=>!isActOff(o));
   const chainBtns=o=>o.flagId&&flagOf(o.flagId)?`<div class="mon-btns" style="margin-top:4px">${linkBtns(flagOf(o.flagId))}</div>`:'';
-  const steps=[1,2,3].map(k=>{const o=activeOffs.find(x=>x.level===k);
+  const stepsFor=reason=>[1,2,3].map(k=>{const o=activeOffs.find(x=>x.level===k&&offReason(x)===reason);
     return o?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b>${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.previousOffenseId?' <span class="tag tag-active">Reassigned</span>':''}
         <br>Incident: ${esc(offIncident(o))}${offFlagRef(o)}<br>Violation: ${esc(REASON_LABEL[offReason(o)]||'—')}${o.sourceRecordId?' · Source record: '+esc(o.sourceRecordId):''}<br>Incident Date: <b>${fmt(offIncidentAt(o))}</b>
         <br>Assigned: ${fmt(o.at)}<br>Assigned By: ${esc(o.admin)}<br>Reason: <b>${esc(REASON_LABEL[offReason(o)]||o.reason)}</b>${REASON_LABEL[offReason(o)]&&o.reason&&o.reason!==REASON_LABEL[offReason(o)]?' — '+esc(o.reason):''}${o.notes?'<br>Notes: '+esc(o.notes):''}${chainBtns(o)}</div></div>`
-    :s.lvl>=k&&!offs.some(x=>x.level===k)?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Recorded before offense records were kept — no linked flag</div></div>`
+    :legacyLevels(name).includes(k)?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Recorded before offense records were kept — no linked flag</div></div>`
     :`<div class="off-step" style="color:var(--muted)"><span>○</span><div><b>${ORD[k]} Offense</b><br>Not yet imposed</div></div>`;}).join('');
+  const steps=[['OVERDUE_RETURN','Overdue Return'],['CALL_LOG_VERIFICATION','Call Log / Verification']].map(([r,l])=>`<div style="font-weight:600;font-size:.8rem;margin:10px 0 2px">${l} offenses <span style="font-weight:400;color:var(--muted)">— counted separately</span></div>${stepsFor(r)}`).join('');
   const supHtml=sup.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Superseded / withdrawn assignments — ${sup.length} (audit trail)</summary>${sup.map(o=>`<div class="off-step" style="color:var(--muted)"><span>↺</span><div><b>${ORD[o.level]} Offense</b> — ${esc(offIncident(o))} · incident ${fmt(offIncidentAt(o))}<br>Assigned ${fmt(o.at)} by ${esc(o.admin)} — ${esc(o.reason)}<br>${o.replacedById?`Reassigned to ${ORD[o.replacedByLevel]} Offense`:'Withdrawn'} ${fmt(o.supersededAt)} by ${esc(o.supersededBy)} — ${esc(o.supersededReason)}</div></div>`).join('')}</details>`:'';
   const restHtml=rests.map(r=>`<div class="off-step"><span>${r.active?'🔴':'🟢'}</span><div><b>${r.active?'Restricted':'Restriction removed'}</b> · Applied ${fmt(r.at)} by ${esc(r.by)} — ${esc(r.reason)}${r.active?'':`<br>Removed ${fmt(r.removedAt)} by ${esc(r.removedBy)} — ${esc(r.removeReason)}`}</div></div>`).join('');
   const cbtn=(c,st,l)=>`<button class="btn btn-info" onclick="monClarStatus('${esc(c.id)}','${st}')" type="button">${l}</button>`;
   const clarHtml=clars.length?clars.map((c,i)=>{const st=c.status,open=i===0&&CLAR_OPEN.includes(st)&&st!=='Restriction Approved';
     return `<div class="off-step"><span>${CLAR_OPEN.includes(st)?'🟠':'⚪'}</span><div><b>${esc(st)}</b><br>Requested: ${fmt(c.requestedAt)} by ${esc(c.requestedBy)}${c.manager?' · Manager: '+esc(c.manager):''}<br>Reason: ${esc(c.reason)}${c.notes?'<br>Notes: '+esc(c.notes):''}${c.updatedAt?`<br>Last update: ${fmt(c.updatedAt)} by ${esc(c.updatedBy)}`:''}
       ${open?`<div class="mon-btns" style="margin-top:4px">${st==='Pending Clarification'?cbtn(c,'Clarification Received','Mark Received'):''}${st!=='Verified'?cbtn(c,'Verified','Mark Verified'):''}${cbtn(c,'Rejected','Mark Rejected')}</div><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Records the manager's response, timestamped with your name. Uses the notes field below if filled.</div>`:''}</div></div>`;}).join(''):'<div style="font-size:.8rem;color:var(--muted)">Not requested.</div>';
-  body.innerHTML=`<div class="mon-summary">${cell('Status',s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">ACTIVE</span>')}${cell('Offense level',s.lvl?ORD[s.lvl]+' Offense':'None')}
+  body.innerHTML=`<div class="mon-summary">${cell('Status',s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">ACTIVE</span>')}${cell('Offense level',lvlText(s))}
     ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clar.status):'Not requested')}
     ${cell('Overdue count',s.ovd)}${cell('Call activity flag',yn(s.pCalls))}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
     ${alerts.length?`<div class="mon-alert">${alerts.map(esc).join('<br>')}</div>`:''}
