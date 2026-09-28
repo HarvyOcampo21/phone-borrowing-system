@@ -2310,12 +2310,14 @@ async function loadMonitoring(){
   const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
   set(r);
   const fresh=detectFlags();
-  if(fresh.length&&(await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh})).success){
-    const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);
+  if(fresh.length){
+    const sy=await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh});
+    if(sy.success){const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);}
+    else if(!window.__syncWarned){window.__syncWarned=true;toast('❌ Automatic flag sync failed: '+sy.message,'error');}
   }
   if(!window.__stamped&&mon.flags.some(f=>!f.flagReason&&REASON_OF_TYPE[f.type])){window.__stamped=true;
     const st=await api({action:'stampFlagReasons'});if(st.success&&st.updated){const r3=await api({action:'getMonitoring'});if(r3.success)set(r3);}}
-  mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL').length;renderBackfill();
+  mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).length;renderBackfill();
   fillMonConfig();renderMonitoring();renderNotifPanel();
   if(selectedAgentDash)renderCompliance();
 }
@@ -2637,7 +2639,7 @@ function renderBackfill(res){
 let backfilling=false;
 async function runBackfill(){
   if(backfilling)return;
-  const cand=detectFlags(true).filter(f=>f.source==='HISTORICAL').sort((x,y)=>x.occurredAt.localeCompare(y.occurredAt));
+  const cand=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).sort((x,y)=>x.occurredAt.localeCompare(y.occurredAt));
   const summary={agents:new Set(cacheRecords.map(r=>r['Agent Name'])).size,records:cacheRecords.length,created:0,skipped:detectSkipped,dupPrevented:0};
   if(!cand.length){renderBackfill({...summary,admin:currentAdminUsername});return toast('Nothing to backfill — existing records already have flags.','info');}
   const by={};cand.forEach(f=>{by[f.type]=(by[f.type]||0)+1;});
