@@ -283,6 +283,33 @@
       @page{margin:1.5cm;size:A4 landscape}
     }
 
+
+    /* ── AGENT MONITORING ── */
+    .mon-modal{position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:600;display:none;align-items:flex-start;justify-content:center;padding:4vh 14px;overflow-y:auto}
+    .mon-modal.show{display:flex}
+    .mon-box{background:var(--card);border:1.5px solid var(--border);border-radius:var(--radius);width:100%;max-width:820px;padding:22px;box-shadow:var(--shadow)}
+    .mon-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;margin-bottom:14px}
+    .mon-name{font-family:'DM Serif Display',serif;font-size:1.4rem;color:var(--primary)}
+    .mon-close{background:none;border:none;color:var(--muted);font-size:1.2rem;cursor:pointer;padding:4px 8px}
+    .mon-sec{font-size:.72rem;font-weight:700;color:var(--accent);margin:18px 0 8px}
+    .mon-actions{margin-top:18px;padding-top:16px;border-top:1.5px solid var(--border)}
+    .mon-btns{display:flex;gap:7px;flex-wrap:wrap;margin-top:10px}
+    .mon-summary{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+    .mon-summary div{background:var(--input-bg);border-radius:10px;padding:10px 12px;font-size:.72rem;color:var(--muted)}
+    .mon-summary b{display:block;font-size:1.05rem;color:var(--text);margin-top:2px}
+    .tag-restricted{background:var(--red);color:#fff}
+    .flag-card{border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;margin-bottom:10px;background:var(--input-bg)}
+    .flag-top{font-size:.84rem;margin-bottom:8px}
+    .flag-row{display:flex;gap:10px;font-size:.76rem;padding:2px 0}
+    .flag-row>span{width:130px;flex-shrink:0;color:var(--muted)}
+    .off-step{display:flex;gap:10px;padding:8px 0;border-bottom:1px solid var(--border);font-size:.8rem;line-height:1.5}
+    .off-step>span{width:20px;flex-shrink:0;text-align:center}
+    .tl-item{display:flex;gap:12px;padding:7px 0;border-bottom:1px solid var(--border);font-size:.78rem}
+    .tl-t{width:130px;flex-shrink:0;color:var(--muted);font-size:.7rem}
+    .mon-alert{margin-top:12px;padding:10px 12px;border-radius:10px;background:rgba(var(--yellow-rgb),.12);border:1.5px solid rgba(var(--yellow-rgb),.3);font-size:.78rem;font-weight:600}
+    .mon-settings summary{cursor:pointer;font-weight:600;font-size:.84rem;color:var(--primary)}
+    .mon-settings .inline-row{margin-top:12px}
+
     /* ── RESPONSIVE ── */
     @media(max-width:768px){
       .sidebar{transform:translateX(-100%)}.sidebar.open{transform:translateX(0)}
@@ -373,6 +400,10 @@
           <span class="badge-alert" id="unreturnedBadge">0</span>
         </div>
         <div class="nav-item" onclick="showPage('history',this)">Unit History</div>
+        <div class="nav-item" onclick="showPage('monitoring',this)">
+          Agent Monitoring
+          <span class="badge-alert" id="monBadge">0</span>
+        </div>
       </div>
       <div class="sidebar-footer">
         <button class="theme-toggle" id="sidebarThemeToggle" onclick="toggleTheme()" type="button"><span class="ico" id="themeToggleIcon">🌙</span><span id="themeToggleLabel">Dark mode</span></button>
@@ -434,6 +465,27 @@
 
         <!-- INDIVIDUAL AGENT DASHBOARD -->
         <div id="agentDashCard">
+
+          <div class="card" id="compCard" style="border-color:var(--primary)">
+            <div class="card-title">Agent compliance</div>
+            <div id="compBody"></div>
+            <div class="mon-actions">
+              <div class="card-title" style="margin-bottom:8px">Enforcement actions — manual only</div>
+              <div class="field"><label>Reason (required for offenses, dismissals, clarification and restriction changes)</label><input type="text" id="monReason" autocomplete="off"/></div>
+              <div class="field" style="margin-bottom:0"><label>Admin notes</label><textarea id="monNotes" style="min-height:56px"></textarea></div>
+              <div class="mon-btns">
+                <button class="btn btn-primary btn-sm" id="btnO1" onclick="monImpose(1)" type="button">Impose 1st Offense</button>
+                <button class="btn btn-primary btn-sm" id="btnO2" onclick="monImpose(2)" type="button">Impose 2nd Offense</button>
+                <button class="btn btn-primary btn-sm" id="btnO3" onclick="monImpose(3)" type="button">Impose 3rd Offense</button>
+                <button class="btn btn-info" id="btnClar" onclick="monAct('requestClarification')" type="button">Request Manager Clarification</button>
+                <button class="btn btn-danger btn-sm" id="btnRestrict" onclick="monAct('restrictAgent')" type="button">Restrict Agent</button>
+                <button class="btn btn-verify" id="btnUnrestrict" onclick="monAct('removeRestriction')" type="button">Remove Restriction</button>
+                <button class="btn btn-warn" onclick="monAct('addAdminNote')" type="button">Add Note</button>
+              </div>
+              <label style="display:flex;gap:6px;align-items:center;font-weight:500;margin:12px 0 0"><input type="checkbox" id="monOverride" style="width:auto" onchange="renderCompliance()"/> Override sequence (allow skipping a level — reason required)</label>
+              <div id="monHint" style="font-size:.72rem;color:var(--muted);margin-top:8px"></div>
+            </div>
+          </div>
           <div class="card" style="border-color:var(--primary2)">
             <div class="agent-dash-header">
               <div>
@@ -708,6 +760,40 @@
         </div>
       </div>
 
+
+      <!-- ══════════ AGENT MONITORING ══════════ -->
+      <div class="page" id="page-monitoring">
+        <div class="page-header"><div class="page-header-left"><h2>Agent Monitoring</h2>
+          <p>The system flags possible violations; you decide what becomes an offense or a restriction.</p></div></div>
+        <div class="card mon-settings">
+          <details id="monSettings"><summary>Thresholds &amp; settings</summary>
+            <div class="inline-row">
+              <div class="field"><label>Minimum calls per period</label><input type="number" id="cfgMinCalls" min="0"/></div>
+              <div class="field"><label>Success rate must exceed (%)</label><input type="number" id="cfgMinRate" min="0" max="100"/></div>
+              <div class="field"><label>Activity period (days)</label><input type="number" id="cfgPeriod" min="1" max="90"/></div>
+              <div class="field"><label>Tracking starts</label><input type="date" id="cfgStart"/></div>
+            </div>
+            <div class="inline-row">
+              <div class="field"><label>Overdue incidents for 1st offense</label><input type="number" id="cfgO1" min="1"/></div>
+              <div class="field"><label>…for 2nd offense</label><input type="number" id="cfgO2" min="1"/></div>
+              <div class="field"><label>…for 3rd offense</label><input type="number" id="cfgO3" min="1"/></div>
+              <button class="btn btn-primary" onclick="saveMonConfig()" type="button">Save settings</button>
+            </div>
+          </details>
+        </div>
+        <div class="card">
+          <div class="filter-tabs" id="monTabs" style="margin-bottom:12px"></div>
+          <div class="list-toolbar">
+            <div class="search-wrap"><span class="search-icon">🔍</span><input type="text" id="monSearch" placeholder="Search agents…" oninput="renderMonitoring()"/></div>
+            <span class="list-count" id="monCount"></span>
+          </div>
+          <div class="table-wrap"><table>
+            <thead><tr><th>Agent</th><th>Status</th><th>Overdue</th><th>Call activity flag</th><th>Success rate flag</th><th>Offense level</th><th></th></tr></thead>
+            <tbody id="monBody"><tr class="empty-row"><td colspan="7">Loading…</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+
     </main>
   </div>
 </div>
@@ -795,6 +881,7 @@ function buildNotifications(){
       unitNo:p.unitNo,
     });
   });
+  list.push(...monNotifications());
   // Drop dismissed keys that no longer correspond to any live notification —
   // clean up the shared collection so it doesn't grow forever. Fire-and-forget:
   // harmless if it races with another admin doing the same cleanup.
@@ -874,6 +961,7 @@ function handleNotifClick(key){
   const n=lastNotifsByKey[key];
   closeNotifPanel();
   if(!n)return;
+  if(n.type==='mon'){navigateToPage('monitoring');setTimeout(()=>openMon(n.agentName),100);return;}
   if(n.type==='pin'){
     navigateToPage('agents');
     const search=document.getElementById('agentSearch');
@@ -993,6 +1081,7 @@ function showPage(name,el){
   if(name==='unreturned') loadUnreturned();
   if(name==='history')    populateHistoryUnits();
   if(name==='teams')      renderTeamsTable();
+  if(name==='monitoring') renderMonitoring();
 }
 
 function jumpToAgentsFromDashboard(){
@@ -1021,6 +1110,7 @@ async function loadAll(){
     updatePendingBadge();
     updateAgentPinBadge();
     renderDashboard();
+    await loadMonitoring();
     setLiveLabel();
   }catch{}
 }
@@ -1086,6 +1176,7 @@ async function refreshAll(){
       renderDashboard();
       if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
     }
+    await loadMonitoring();
     setLiveLabel();
   }catch{}
 }
@@ -1305,6 +1396,7 @@ function callCellHtml(agentVal,adminVal,effVal,flagged){
 }
 
 function renderAgentDashboard(name){
+  renderCompliance(name);
   const agent=cacheAgents.find(a=>a.name===name)||{name,team:''};
   document.getElementById('agentDashName').textContent=name;
   document.getElementById('agentDashMeta').textContent=(agent.team?`Team: ${agent.team}  ·  `:'')+'Showing: '+getPeriodLabel();
@@ -1645,7 +1737,7 @@ function renderAgentTable(){
     const pinFlag=a.pinResetRequested?`<div class="pin-flag" title="${pinRequestedAt?'Requested '+pinRequestedAt:''}">🔔 PIN reset requested</div>`:'';
     return `<tr id="agentrow-${sanitizeId(a.name)}">
       <td style="color:var(--muted);width:36px">${start+i+1}</td>
-      <td style="font-weight:500">👤 ${a.name}${pinFlag}</td>
+      <td style="font-weight:500">👤 ${a.name}${a.restricted?' <span class="tag tag-restricted">RESTRICTED</span>':''}${pinFlag}</td>
       <td><select onchange="assignTeam('${a.name.replace(/'/g,"\\'")}',this.value)" style="width:130px;padding:5px 8px;font-size:.8rem;border-radius:7px;border:1.5px solid var(--border);background:var(--input-bg)">${teamOpts}</select></td>
       <td style="display:flex;gap:5px;flex-wrap:wrap">
         <button class="btn btn-info" onclick="viewAgentPerformance('${a.name.replace(/'/g,"\\'")}')">📊 Dashboard</button>
@@ -2124,6 +2216,208 @@ async function loadHistory(){
     }).join('');
   }catch{tbody.innerHTML='<tr class="empty-row"><td colspan="11">Failed to load.</td></tr>';}
 }
+
+// ══════════════════════════════════════════════════════════
+//  AGENT MONITORING — automated detection, manual enforcement
+// ══════════════════════════════════════════════════════════
+let mon={config:{minCalls:10,minSuccessRate:50,periodDays:7,overdueThresholds:[1,2,3],trackingStart:''},flags:[],audit:[],clars:[],offenses:[],restr:[]};
+let monFilter='all';
+const ORD=['','1st','2nd','3rd'];
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmtDay=t=>new Date(t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
+const MON_FILTERS=[['all','All Agents'],['none','No Flags'],['has','Has Flags'],['overdue','Overdue Flags'],['calls','Call Activity Flags'],['rate','Success Ratio Flags'],['o1','1st Offense'],['o2','2nd Offense'],['o3','3rd Offense'],['restricted','Restricted Agents']];
+const MON_TEST={all:()=>true,none:s=>!s.pAny,has:s=>s.pAny>0,overdue:s=>s.pOvd>0,calls:s=>s.pCalls>0,rate:s=>s.pRate>0,o1:s=>s.lvl===1,o2:s=>s.lvl===2,o3:s=>s.lvl===3,restricted:s=>s.restricted};
+const FLAG_LABEL={overdue:'Overdue',calls:'Low call count',rate:'Low success rate'};
+
+// Detection: returns flags that don't exist yet. Ids are deterministic, so
+// this is safe to run on every refresh.
+function detectFlags(){
+  const c=mon.config,have=new Set(mon.flags.map(f=>f.id)),out=[],now=Date.now();
+  const start=c.trackingStart?new Date(c.trackingStart+'T00:00:00').getTime():0;
+  const add=f=>{if(!have.has(f.id)){have.add(f.id);out.push(f);}};
+  cacheRecords.forEach(r=>{
+    const bt=r['Borrow Time']?new Date(r['Borrow Time']).getTime():0;
+    if(!bt||bt<start)return;
+    const stillOut=!r['Return Time']&&now-bt>=OVERDUE_HOURS*3600000;
+    if(!stillOut&&!isOverdueReturn(r))return;
+    const n=r['Agent Name'];
+    add({id:'ovd_'+r['Record ID'],type:'overdue',agentName:n,recordId:r['Record ID'],data:{Unit:r['Phone Unit'],Borrowed:fmt(r['Borrow Time']),Returned:stillOut?'Not yet returned':fmt(r['Return Time']),'Allowed hours':OVERDUE_HOURS},
+      title:`Overdue alert: ${n} kept Unit ${r['Phone Unit']} past the ${OVERDUE_HOURS}h limit.`,
+      detail:`Unit ${r['Phone Unit']} borrowed ${fmt(r['Borrow Time'])} — ${stillOut?'still not returned':'returned late'}.`});
+  });
+  if(start){ // completed activity periods only (last 8), counted per agent
+    const P=c.periodDays*86400000,cur=Math.floor((now-start)/P),agg={};
+    cacheRecords.forEach(r=>{
+      if(!r['Return Time']||!r['Borrow Time'])return;
+      const bt=new Date(r['Borrow Time']).getTime(),w=Math.floor((bt-start)/P);
+      if(bt<start||w>=cur||w<cur-8)return;
+      const k=w+'|'+r['Agent Name'],x=agg[k]||(agg[k]={w,n:r['Agent Name'],calls:0,succ:0});
+      x.calls+=effCalls(r);x.succ+=effSuccessful(r);
+    });
+    Object.values(agg).forEach(x=>{
+      const lab=`${fmtDay(start+x.w*P)} – ${fmtDay(start+(x.w+1)*P-1)}`,id=sanitizeId(x.n)+'_'+x.w;
+      const pct=x.calls?Math.round(x.succ/x.calls*100):0;
+      if(x.calls<c.minCalls)add({id:'calls_'+id,type:'calls',agentName:x.n,period:lab,data:{Period:lab,'Calls made':x.calls,'Required minimum':c.minCalls},
+        title:`Call activity alert: ${x.n} made only ${x.calls} calls (${lab}). Minimum required: ${c.minCalls}.`,
+        detail:`${x.calls} calls made · ${c.minCalls} required · ${lab}`});
+      if(x.calls>0&&x.succ*100/x.calls<=c.minSuccessRate)add({id:'rate_'+id,type:'rate',agentName:x.n,period:lab,data:{Period:lab,'Total calls':x.calls,'Successful calls':x.succ,'Success rate':pct+'%','Must exceed':c.minSuccessRate+'%'},
+        title:`Call success rate alert: ${x.n} made ${x.calls} calls with ${x.succ} successful (${pct}%). Must exceed ${c.minSuccessRate}%.`,
+        detail:`${x.succ} of ${x.calls} calls successful (${pct}%) · must exceed ${c.minSuccessRate}% · ${lab}`});
+    });
+  }
+  return out;
+}
+
+function agState(a){
+  const fl=mon.flags.filter(f=>f.agentName===a.name),pend=t=>fl.filter(f=>f.status==='pending'&&(!t||f.type===t)).length;
+  const ovd=fl.filter(f=>f.type==='overdue'&&f.status!=='dismissed').length,lvl=a.offenseLevel||0,thr=mon.config.overdueThresholds;
+  let pot=0;for(let k=1;k<=3;k++)if(ovd>=thr[k-1])pot=k;
+  return {fl,ovd,lvl,pot:pot>lvl?pot:0,pOvd:pend('overdue'),pCalls:pend('calls'),pRate:pend('rate'),pAny:pend(),restricted:!!a.restricted};
+}
+
+async function loadMonitoring(){
+  const r=await api({action:'getMonitoring'});
+  if(!r.success)return;
+  const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
+  set(r);
+  const fresh=detectFlags();
+  if(fresh.length&&(await api({action:'syncFlags',flags:fresh})).success){
+    const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);
+  }
+  fillMonConfig();renderMonitoring();renderNotifPanel();
+  if(selectedAgentDash)renderCompliance();
+}
+
+// Alerts for the bell: potential offense thresholds, restriction eligibility, and call flags.
+function monNotifications(){
+  const list=[];
+  cacheAgents.forEach(a=>{
+    const s=agState(a);
+    if(s.pot)list.push({key:`mon-ovd:${a.name}:${s.pot}:${s.ovd}`,type:'mon',icon:'⚠️',agentName:a.name,time:new Date().toISOString(),
+      title:`<b>Overdue Offense Alert</b> — ${esc(a.name)} has reached the threshold for a potential ${ORD[s.pot]} overdue offense (${s.ovd} incident${s.ovd!==1?'s':''}). Review the records before imposing it.`});
+    if(s.lvl>=3&&!s.restricted)list.push({key:`mon-elig:${a.name}`,type:'mon',icon:'⚠️',agentName:a.name,time:new Date().toISOString(),
+      title:`<b>Restriction review</b> — ${esc(a.name)} has a confirmed 3rd offense and is eligible for restriction.`});
+  });
+  mon.flags.filter(f=>f.status==='pending'&&f.type!=='overdue').forEach(f=>list.push({key:'mon-flag:'+f.id,type:'mon',icon:'⚠️',agentName:f.agentName,time:f.createdAt,title:esc(f.title)}));
+  return list;
+}
+
+function fillMonConfig(){
+  if(document.getElementById('monSettings').contains(document.activeElement))return;
+  const c=mon.config,set=(id,v)=>{document.getElementById(id).value=v;};
+  set('cfgMinCalls',c.minCalls);set('cfgMinRate',c.minSuccessRate);set('cfgPeriod',c.periodDays);set('cfgStart',c.trackingStart||'');
+  set('cfgO1',c.overdueThresholds[0]);set('cfgO2',c.overdueThresholds[1]);set('cfgO3',c.overdueThresholds[2]);
+}
+async function saveMonConfig(){
+  const v=id=>document.getElementById(id).value;
+  const res=await api({action:'saveMonitorConfig',admin:currentAdminUsername,minCalls:v('cfgMinCalls'),minSuccessRate:v('cfgMinRate'),periodDays:v('cfgPeriod'),
+    trackingStart:v('cfgStart'),overdueThresholds:[v('cfgO1'),v('cfgO2'),v('cfgO3')]});
+  if(!res.success)return toast('❌ '+res.message,'error');
+  toast('✅ '+res.message,'success');await loadMonitoring();
+}
+
+function renderMonitoring(){
+  const states=cacheAgents.map(a=>({a,s:agState(a)}));
+  const attn=states.filter(x=>x.s.pAny||x.s.pot||(x.s.lvl>=3&&!x.s.restricted)).length;
+  const badge=document.getElementById('monBadge');badge.style.display=attn?'inline-block':'none';badge.textContent=attn;
+  document.getElementById('monTabs').innerHTML=MON_FILTERS.map(([k,l])=>`<button class="filter-tab${k===monFilter?' active':''}" onclick="setMonFilter('${k}')" type="button">${l}</button>`).join('');
+  const q=(document.getElementById('monSearch').value||'').toLowerCase();
+  const rows=states.filter(x=>MON_TEST[monFilter](x.s)&&x.a.name.toLowerCase().includes(q)).sort((x,y)=>(y.s.pAny+y.s.pot)-(x.s.pAny+x.s.pot));
+  document.getElementById('monCount').textContent=`${rows.length} agent${rows.length!==1?'s':''}`;
+  const yn=n=>n?`<span class="tag tag-flagged">Yes${n>1?' ('+n+')':''}</span>`:'<span class="tag tag-unverified">No</span>';
+  document.getElementById('monBody').innerHTML=rows.length?rows.map(({a,s})=>`<tr>
+    <td style="font-weight:500">${esc(a.name)}<div style="font-size:.68rem;color:var(--muted)">${esc(a.team||'No team')}</div></td>
+    <td>${s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">Active</span>'}</td>
+    <td>${s.ovd}${s.pOvd?` <span class="tag tag-overdue">${s.pOvd} to review</span>`:''}</td>
+    <td>${yn(s.pCalls)}</td><td>${yn(s.pRate)}</td>
+    <td>${s.lvl?ORD[s.lvl]+' Offense':'None'}${s.pot?` <span class="tag tag-overdue">Potential ${ORD[s.pot]}</span>`:''}</td>
+    <td><button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open dashboard</button></td></tr>`).join('')
+    :'<tr class="empty-row"><td colspan="7">No agents match this filter.</td></tr>';
+}
+function setMonFilter(k){monFilter=k;renderMonitoring();}
+
+function openMon(name){viewAgentPerformance(name);} // Monitoring page → the agent's dashboard
+const fmtD=v=>v?new Date(v).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'}):'—';
+const byDesc=k=>(x,y)=>(y[k]||'').localeCompare(x[k]||'');
+const pad=n=>String(n||'—').padStart(4,'0');
+
+function flagCard(f,s,offs,rests,clar){
+  const off=offs.find(o=>o.id===f.offenseId)||(f.offenseLevel?offs.find(o=>o.level===f.offenseLevel):null);
+  const rest=off&&off.level===3?rests.find(r=>r.offenseId===off.id):null;
+  const st=f.status==='pending'?['tag-overdue','PENDING ADMIN REVIEW']:f.status==='confirmed'?['tag-verified','CONFIRMED']:['tag-unverified','DISMISSED'];
+  const row=(l,v)=>`<div class="flag-row"><span>${l}</span><div>${v}</div></div>`;
+  const btn=(cls,act,label)=>`<button class="btn ${cls}" data-f="${esc(f.id)}" data-t="${f.type}" onclick="monFlag(this.dataset.f,'${act}',this.dataset.t)" type="button">${label}</button>`;
+  const data=Object.entries(f.data||{}).map(([k,v])=>`${esc(k)}: <b>${esc(v)}</b>`).join(' · ');
+  return `<div class="flag-card"><div class="flag-top"><b>FLAG #${pad(f.flagNo)}</b> · ${FLAG_LABEL[f.type]||f.type} <span class="tag ${st[0]}">${st[1]}</span></div>
+    ${row('Detected',fmt(f.createdAt))}${row('Reason',esc(f.detail))}${data?row('Original data',data):''}
+    ${row('Reviewed',f.reviewedBy?`${esc(f.reviewedBy)} · ${fmt(f.reviewedAt)} · ${f.status==='dismissed'?'Dismissed':'Confirmed'}`:'Not reviewed yet')}
+    ${(f.reason||f.notes)?row('Admin note',esc([f.reason,f.notes].filter(Boolean).join(' — '))):''}
+    ${row('Enforcement',off?`<b>${ORD[off.level]} Offense</b> imposed by ${esc(off.admin)} · ${fmtD(off.at)}`:f.status==='dismissed'?'No offense (dismissed)':'No offense imposed')}
+    ${off&&off.level===3?row('Restriction',rest?`Restricted ${fmtD(rest.at)} by ${esc(rest.by)}`:'Not restricted'):''}
+    ${off&&off.level===3&&clar?row('Manager clarification',esc(clar.status)):''}
+    ${(f.status==='pending'||(f.status!=='dismissed'&&!f.offenseLevel&&s.lvl<3))?`<div class="mon-btns">${f.status==='pending'?btn('btn-verify','confirm','Confirm Flag')+btn('btn-danger btn-sm','dismiss','Dismiss Flag'):''}${!f.offenseLevel&&s.lvl<3?btn('btn-info','impose','Impose '+ORD[s.lvl+1]+' Offense from this flag'):''}</div>`:''}</div>`;
+}
+
+function renderCompliance(name){
+  name=name||selectedAgentDash;const body=document.getElementById('compBody');
+  const a=cacheAgents.find(x=>x.name===name);if(!body||!a)return;
+  const s=agState(a),offs=mon.offenses.filter(o=>o.agentName===name).sort(byDesc('at')),rests=mon.restr.filter(r=>r.agentName===name).sort(byDesc('at'));
+  const clar=mon.clars.filter(c=>c.agentName===name).sort(byDesc('requestedAt'))[0];
+  const openClar=!!clar&&CLAR_OPEN.includes(clar.status),eligible=s.lvl>=3&&!s.restricted;
+  const clarOk=!!clar&&['Clarification Received','Verified','Restriction Approved'].includes(clar.status);
+  const rl=s.restricted?['tag-restricted','RESTRICTED']:eligible?['tag-flagged','ELIGIBLE FOR RESTRICTION']:['tag-verified','NOT RESTRICTED'];
+  const cell=(l,v)=>`<div>${l}<b>${v}</b></div>`,yn=n=>n?'<span style="color:var(--red)">Yes</span>':'No';
+  const alerts=[s.pAny?`⚠ ${s.pAny} flag${s.pAny>1?'s':''} awaiting review.`:'',s.pot?`Overdue count reaches the threshold for a potential ${ORD[s.pot]} offense — nothing is imposed until you decide.`:'',
+    eligible?'Eligible for restriction. Request manager clarification, then restrict manually.':''].filter(Boolean);
+  const active=s.fl.filter(f=>f.status!=='dismissed').sort((x,y)=>(x.status==='pending'?0:1)-(y.status==='pending'?0:1)||(y.createdAt||'').localeCompare(x.createdAt||''));
+  const dism=s.fl.filter(f=>f.status==='dismissed').sort(byDesc('createdAt'));
+  const steps=[1,2,3].map(k=>{const o=offs.find(x=>x.level===k);
+    return o?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Date: ${fmtD(o.at)} · Reason: ${esc(o.reason)} · Confirmed by: ${esc(o.admin)}${o.flagNo?' · Flag #'+pad(o.flagNo):''}${o.override?' <span class="tag tag-overdue">Sequence override</span>':''}${o.notes?'<br>Notes: '+esc(o.notes):''}</div></div>`
+    :s.lvl>=k?`<div class="off-step"><span>✓</span><div><b>${ORD[k]} Offense</b><br>Skipped by override or recorded before history tracking</div></div>`
+    :`<div class="off-step" style="color:var(--muted)"><span>○</span><div><b>${ORD[k]} Offense</b><br>Not yet imposed</div></div>`;}).join('');
+  const restHtml=rests.map(r=>`<div class="off-step"><span>${r.active?'🔴':'🟢'}</span><div><b>${r.active?'Restricted':'Restriction removed'}</b> · Applied ${fmtD(r.at)} by ${esc(r.by)} — ${esc(r.reason)}${r.active?'':`<br>Removed ${fmtD(r.removedAt)} by ${esc(r.removedBy)} — ${esc(r.removeReason)}`}</div></div>`).join('');
+  const ev=[];
+  s.fl.forEach(f=>ev.push({t:f.createdAt,ic:'🟡',title:`Flag #${pad(f.flagNo)} detected — ${FLAG_LABEL[f.type]||f.type}`,sub:f.detail}));
+  mon.audit.filter(e=>e.agentName===name&&e.violationType!=='settings').forEach(e=>{
+    const d=e.decision||'',ic=/restricted/i.test(d)?'🔴':/clarification/i.test(d)?'🟠':/dismissed|note/i.test(d)?'⚪':'🟢';
+    ev.push({t:e.at,ic,title:d==='Offense imposed'?`${ORD[e.newLevel]} offense imposed`:d,admin:e.admin,sub:[e.reason,e.notes].filter(Boolean).join(' — ')});
+  });
+  ev.sort(byDesc('t'));
+  body.innerHTML=`<div class="mon-summary">${cell('Status',s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">ACTIVE</span>')}${cell('Offense level',s.lvl?ORD[s.lvl]+' Offense':'None')}
+    ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clar.status):'Not requested')}
+    ${cell('Overdue count',s.ovd)}${cell('Call activity flag',yn(s.pCalls))}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
+    ${alerts.length?`<div class="mon-alert">${alerts.map(esc).join('<br>')}</div>`:''}
+    <div class="mon-sec">Active flags</div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
+    ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">${dism.length} dismissed flag${dism.length>1?'s':''}</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
+    <div class="mon-sec">Offense history</div>${steps}
+    <div class="mon-sec">Restriction status</div>
+    <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b><br>Manager clarification: ${clar?esc(clar.status)+(clar.manager?' · Manager: '+esc(clar.manager):''):'Not requested'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmtD(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
+    <div class="mon-sec">Agent history</div>
+    ${ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · Admin: '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>'}`;
+  const ov=document.getElementById('monOverride').checked,dis=(id,v)=>{document.getElementById(id).disabled=v;};
+  [1,2,3].forEach(k=>{const b=document.getElementById('btnO'+k);b.disabled=!(k===s.lvl+1||(ov&&k>s.lvl));b.title=k<=s.lvl?'Already imposed':k>s.lvl+1&&!ov?'Offenses are imposed in order — use the override to skip':'';});
+  dis('btnClar',s.lvl<3||openClar);dis('btnRestrict',!eligible||!clarOk);dis('btnUnrestrict',!s.restricted);
+  document.getElementById('monHint').textContent=eligible&&!clarOk?(clar?'Restriction unlocks once the clarification is marked Received or Verified.':'Restriction unlocks after a manager clarification is requested and received.'):'';
+}
+
+async function monCall(payload){
+  const name=selectedAgentDash;if(!name)return false;
+  const ask={imposeOffense:'Impose this offense?',restrictAgent:'Restrict this agent? They will be blocked from borrowing phones.',removeRestriction:'Remove this restriction?'}[payload.action];
+  if(ask&&!confirm(`${name}: ${ask}`))return false;
+  const res=await api({admin:currentAdminUsername,agentName:name,reason:document.getElementById('monReason').value.trim(),notes:document.getElementById('monNotes').value.trim(),...payload});
+  if(!res.success){toast('❌ '+res.message,'error');return false;}
+  toast('✅ '+res.message,'success');
+  const ag=await api({action:'getAgents'});if(ag.success){cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);}
+  ['monReason','monNotes'].forEach(id=>{document.getElementById(id).value='';});document.getElementById('monOverride').checked=false;
+  await loadMonitoring();return true;
+}
+const monAct=action=>monCall({action});
+const monImpose=level=>monCall({action:'imposeOffense',level,override:document.getElementById('monOverride').checked});
+function monFlag(flagId,act,type){
+  if(act==='impose'){const a=cacheAgents.find(x=>x.name===selectedAgentDash);return monCall({action:'imposeOffense',level:(a.offenseLevel||0)+1,flagId,violationType:type});}
+  return monCall({action:'reviewFlag',flagId,decision:act});
+}
+function monClarStatus(id,status){return monCall({action:'updateClarification',id,status});}
 
 // ── HELPERS ───────────────────────────────────────────
 function tagCls(s){return s==='Verified'?'tag-verified':s==='Flagged'?'tag-flagged':'tag-unverified';}

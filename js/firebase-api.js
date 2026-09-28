@@ -78,6 +78,11 @@ async function getAgents() {
       team: v.team || "",
       pinResetRequested: !!v.pinResetRequested,
       pinResetRequestedAt: toIso(v.pinResetRequestedAt),
+      restrictedBy: v.restrictedBy || "",
+      offenseLevel: v.offenseLevel || 0,
+      restricted: !!v.restricted,
+      restrictionReason: v.restrictionReason || "",
+      restrictedAt: toIso(v.restrictedAt),
     });
   });
   return { success: true, agents };
@@ -208,6 +213,8 @@ async function borrowPhone(data) {
       if (!phoneSnap.exists()) throw new Error("Phone unit not found.");
       const a = agentSnap.data();
       const p = phoneSnap.data();
+      if (a.restricted)
+        throw new Error("Your account is restricted. Please speak with your manager or an admin.");
       if (a.activeBorrowUnit) {
         const heldRef = doc(db, "phones", slug(a.activeBorrowUnit));
         const heldSnap = await tx.get(heldRef);
@@ -705,6 +712,219 @@ async function adminLogin(data) {
   return { success: false, message: "Invalid username or password." };
 }
 
+// ── AGENT MONITORING, OFFENSES & RESTRICTIONS ──────────────
+// Detection is automatic (the admin page creates flags); enforcement is
+// manual: flags never change an agent's offense level or restriction on
+// their own. Collections:
+//   monitorConfig/settings  thresholds (see MON_DEFAULTS)
+//   flags/{id}              { type: overdue|calls|rate, agentName, status: pending|confirmed|dismissed, ... }
+//   auditLog/{id}           one entry per admin action
+//   clarifications/{id}     manager-clarification requests
+//   offenses/{id}           one immutable record per imposed offense (level, flag, admin, reason)
+//   restrictions/{id}       one record per restriction (applied / removed)
+//   counters/flags          running number for FLAG #0001-style ids
+//   agents/{slug}           + offenseLevel (0-3), restricted, restrictionReason, restrictedAt/By
+// Enforcement actions need admins/{user}.canEnforce !== false (default allowed;
+// set canEnforce:false on an admin doc to make them view/review-only).
+const MON_DEFAULTS = { minCalls: 10, minSuccessRate: 50, periodDays: 7, overdueThresholds: [1, 2, 3], trackingStart: "" };
+const CLAR_STATUSES = ["Pending Clarification", "Clarification Received", "Verified", "Rejected", "Restriction Approved", "Restriction Cancelled"];
+const CLAR_OPEN = ["Pending Clarification", "Clarification Received", "Verified", "Restriction Approved"];
+
+const guard = (fn) => async (d) => {
+  try { return await fn(d || {}); } catch (e) { return { success: false, message: e.message }; }
+};
+const need = (v, msg) => { if (v == null || !v.toString().trim()) throw new Error(msg); return v.toString().trim(); };
+function tsToIso(o) { for (const k in o) if (o[k] && o[k].toDate) o[k] = o[k].toDate().toISOString(); return o; }
+const listAll = async (c) => (await getDocs(collection(db, c))).docs.map((d) => tsToIso(d.data()));
+
+async function assertEnforcer(user) {
+  need(user, "Admin not identified — sign in again.");
+  const s = await getDoc(doc(db, "admins", slug(user)));
+  if (!s.exists() || s.data().canEnforce === false)
+    throw new Error("Your admin account can't impose offenses or restrictions.");
+}
+async function writeAudit(e) {
+  const id = "AUD-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
+  const base = { id, at: Timestamp.now(), agentName: null, violationType: null, flagId: null, decision: null, admin: null,
+    prevLevel: null, newLevel: null, reason: "", notes: "", restrictionStatus: null, clarificationStatus: null };
+  await setDoc(doc(db, "auditLog", id), { ...base, ...Object.fromEntries(Object.entries(e).filter(([, v]) => v !== undefined)) });
+}
+
+const getMonitoring = guard(async () => {
+  const cref = doc(db, "monitorConfig", "settings");
+  let cs = await getDoc(cref);
+  if (!cs.exists()) { // first run: start tracking today so old history doesn't flood the queue
+    await setDoc(cref, { ...MON_DEFAULTS, trackingStart: new Date().toISOString().slice(0, 10) });
+    cs = await getDoc(cref);
+  }
+  const [flags, audit, clarifications, offenses, restrictions] = await Promise.all([listAll("flags"), listAll("auditLog"), listAll("clarifications"), listAll("offenses"), listAll("restrictions")]);
+  return { success: true, config: { ...MON_DEFAULTS, ...cs.data() }, flags, audit, clarifications, offenses, restrictions };
+});
+
+const saveMonitorConfig = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const n = (v, min, max, label) => {
+    const x = Number(v);
+    if (!Number.isFinite(x) || x < min || x > max) throw new Error(label + " must be between " + min + " and " + max + ".");
+    return x;
+  };
+  const t = (d.overdueThresholds || []).map(Number);
+  if (t.length !== 3 || t.some((x, i) => !(x >= 1) || (i && x < t[i - 1])))
+    throw new Error("Overdue thresholds must be three non-decreasing numbers, each at least 1.");
+  const cfg = {
+    minCalls: n(d.minCalls, 0, 1000, "Minimum calls"),
+    minSuccessRate: n(d.minSuccessRate, 0, 100, "Minimum success rate"),
+    periodDays: n(d.periodDays, 1, 90, "Activity period"),
+    overdueThresholds: t,
+    trackingStart: d.trackingStart || "",
+  };
+  await setDoc(doc(db, "monitorConfig", "settings"), cfg);
+  await writeAudit({ violationType: "settings", decision: "Settings changed", admin: d.admin, notes: JSON.stringify(cfg) });
+  return { success: true, message: "Settings saved." };
+});
+
+// Flag ids are deterministic (per record / per agent+period), and a flag is
+// only ever created if it doesn't exist — so re-running detection never
+// resets a flag an admin already reviewed.
+const syncFlags = guard(async (d) => {
+  let created = 0;
+  for (const f of d.flags || []) {
+    const ref = doc(db, "flags", f.id);
+    await runTransaction(db, async (tx) => {
+      const cref = doc(db, "counters", "flags");
+      const fs = await tx.get(ref), cs = await tx.get(cref);
+      if (fs.exists()) return;
+      const flagNo = (cs.exists() ? cs.data().n : 0) + 1;
+      tx.set(cref, { n: flagNo });
+      tx.set(ref, { ...f, flagNo, status: "pending", createdAt: Timestamp.now(), reviewedBy: null, reviewedAt: null, offenseLevel: null, reason: "", notes: "" });
+      created++;
+    });
+  }
+  return { success: true, created };
+});
+
+const reviewFlag = guard(async (d) => {
+  const ref = doc(db, "flags", need(d.flagId, "Missing flag."));
+  const s = await getDoc(ref);
+  if (!s.exists()) throw new Error("Flag not found.");
+  const f = s.data();
+  if (f.status !== "pending") throw new Error("This flag was already reviewed.");
+  const dismiss = d.decision === "dismiss";
+  if (dismiss) need(d.reason, "Add a reason for dismissing this flag.");
+  await updateDoc(ref, { status: dismiss ? "dismissed" : "confirmed", reviewedBy: d.admin || "", reviewedAt: Timestamp.now(), reason: d.reason || "", notes: d.notes || "" });
+  await writeAudit({ agentName: f.agentName, violationType: f.type, flagId: f.id, decision: dismiss ? "Flag dismissed" : "Flag confirmed", admin: d.admin, reason: d.reason, notes: d.notes });
+  return { success: true, message: dismiss ? "Flag dismissed — no offense." : "Flag confirmed. Impose an offense if it's warranted." };
+});
+
+const imposeOffense = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const reason = need(d.reason, "A reason is required to impose an offense.");
+  const aref = doc(db, "agents", slug(need(d.agentName, "Missing agent.")));
+  const fref = d.flagId ? doc(db, "flags", d.flagId) : null;
+  const level = Number(d.level), oid = "OFF-" + Date.now();
+  let prev, fd = {};
+  await runTransaction(db, async (tx) => {
+    const a = await tx.get(aref);
+    const f = fref ? await tx.get(fref) : null;
+    if (!a.exists()) throw new Error("Agent not found.");
+    prev = a.data().offenseLevel || 0;
+    if (!(level >= 1 && level <= 3) || level <= prev) throw new Error("Choose an offense level above the current one.");
+    if (level !== prev + 1 && !d.override) throw new Error("Offenses are imposed in order. Use the override to skip a level.");
+    if (f && f.exists()) {
+      fd = f.data();
+      if (fd.status === "dismissed") throw new Error("This flag was dismissed.");
+      if (fd.offenseLevel) throw new Error("This flag already produced an offense.");
+      tx.update(fref, { status: "confirmed", offenseLevel: level, offenseId: oid, reviewedBy: d.admin, reviewedAt: Timestamp.now() });
+    }
+    // Each offense is its own permanent record; the agent doc only caches the current level.
+    tx.set(doc(db, "offenses", oid), { id: oid, agentName: d.agentName, level, prevLevel: prev, flagId: d.flagId || null, flagNo: fd.flagNo || null,
+      violationType: d.violationType || "manual", flagDetail: fd.detail || "", flagData: fd.data || null, decision: "Offense imposed",
+      reason, notes: d.notes || "", admin: d.admin, at: Timestamp.now(), override: level !== prev + 1 });
+    tx.update(aref, { offenseLevel: level });
+  });
+  await writeAudit({ agentName: d.agentName, violationType: d.violationType || "manual", flagId: d.flagId || null, decision: "Offense imposed",
+    admin: d.admin, prevLevel: prev, newLevel: level, reason, notes: d.notes, offenseId: oid });
+  return { success: true, message: ["", "1st", "2nd", "3rd"][level] + " offense imposed." };
+});
+
+const requestClarification = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const reason = need(d.reason, "A reason is required.");
+  const as = await getDoc(doc(db, "agents", slug(need(d.agentName, "Missing agent."))));
+  if (!as.exists()) throw new Error("Agent not found.");
+  if ((as.data().offenseLevel || 0) < 3) throw new Error("Clarification applies once the 3rd offense is confirmed.");
+  if ((await listAll("clarifications")).some((c) => c.agentName === d.agentName && CLAR_OPEN.includes(c.status)))
+    throw new Error("This agent already has an open clarification request.");
+  const team = as.data().team ? await getDoc(doc(db, "teams", slug(as.data().team))) : null;
+  const id = "CLR-" + Date.now();
+  await setDoc(doc(db, "clarifications", id), { id, agentName: d.agentName, manager: team && team.exists() ? team.data().manager || "" : "",
+    reason, requestedAt: Timestamp.now(), requestedBy: d.admin, status: "Pending Clarification", notes: d.notes || "" });
+  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Manager clarification requested", admin: d.admin,
+    reason, notes: d.notes, clarificationStatus: "Pending Clarification" });
+  return { success: true, message: "Clarification requested from the agent's manager." };
+});
+
+const updateClarification = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  if (!CLAR_STATUSES.includes(d.status)) throw new Error("Unknown status.");
+  const ref = doc(db, "clarifications", need(d.id, "Missing clarification."));
+  const s = await getDoc(ref);
+  if (!s.exists()) throw new Error("Clarification not found.");
+  await updateDoc(ref, { status: d.status, notes: d.notes || s.data().notes || "", updatedBy: d.admin, updatedAt: Timestamp.now() });
+  await writeAudit({ agentName: s.data().agentName, violationType: "restriction", decision: "Clarification status: " + d.status, admin: d.admin,
+    reason: d.reason, notes: d.notes, clarificationStatus: d.status });
+  return { success: true, message: "Clarification marked " + d.status + "." };
+});
+
+async function latestClarification(agentName) {
+  return (await listAll("clarifications")).filter((c) => c.agentName === agentName)
+    .sort((a, b) => (b.requestedAt || "").localeCompare(a.requestedAt || ""))[0];
+}
+
+const restrictAgent = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const reason = need(d.reason, "A reason is required to restrict an agent.");
+  const ref = doc(db, "agents", slug(need(d.agentName, "Missing agent.")));
+  const s = await getDoc(ref);
+  if (!s.exists()) throw new Error("Agent not found.");
+  if ((s.data().offenseLevel || 0) < 3) throw new Error("An agent needs a confirmed 3rd offense before restriction.");
+  if (s.data().restricted) throw new Error("Agent is already restricted.");
+  const c = await latestClarification(d.agentName);
+  if (!c || !["Clarification Received", "Verified", "Restriction Approved"].includes(c.status))
+    throw new Error("Request manager clarification and record the outcome (Received or Verified) before restricting.");
+  const lastO = (await listAll("offenses")).filter((o) => o.agentName === d.agentName && o.level === 3).sort((x, y) => (y.at || "").localeCompare(x.at || ""))[0];
+  const rid = "RST-" + Date.now();
+  await setDoc(doc(db, "restrictions", rid), { id: rid, agentName: d.agentName, at: Timestamp.now(), by: d.admin, reason, active: true,
+    offenseId: lastO ? lastO.id : null, clarificationId: c.id, removedAt: null, removedBy: null, removeReason: "" });
+  await updateDoc(ref, { restricted: true, restrictionReason: reason, restrictedAt: Timestamp.now(), restrictedBy: d.admin, restrictionId: rid });
+  await updateDoc(doc(db, "clarifications", c.id), { status: "Restriction Approved", updatedBy: d.admin, updatedAt: Timestamp.now() });
+  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Agent restricted", admin: d.admin, reason, notes: d.notes,
+    prevLevel: 3, newLevel: 3, restrictionStatus: "Restricted", clarificationStatus: "Restriction Approved" });
+  return { success: true, message: d.agentName + " is now restricted." };
+});
+
+const removeRestriction = guard(async (d) => {
+  await assertEnforcer(d.admin);
+  const reason = need(d.reason, "A reason is required to remove a restriction.");
+  const ref = doc(db, "agents", slug(need(d.agentName, "Missing agent.")));
+  const s = await getDoc(ref);
+  if (!s.exists() || !s.data().restricted) throw new Error("Agent isn't restricted.");
+  await updateDoc(ref, { restricted: false });
+  if (s.data().restrictionId) await updateDoc(doc(db, "restrictions", s.data().restrictionId), { active: false, removedAt: Timestamp.now(), removedBy: d.admin, removeReason: reason });
+  const c = await latestClarification(d.agentName);
+  if (c && c.status === "Restriction Approved")
+    await updateDoc(doc(db, "clarifications", c.id), { status: "Restriction Cancelled", updatedBy: d.admin, updatedAt: Timestamp.now() });
+  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Restriction removed", admin: d.admin, reason, notes: d.notes,
+    restrictionStatus: "Not restricted", clarificationStatus: c ? "Restriction Cancelled" : null });
+  return { success: true, message: "Restriction removed." };
+});
+
+const addAdminNote = guard(async (d) => {
+  const notes = need(d.notes, "Write a note first.");
+  await writeAudit({ agentName: need(d.agentName, "Missing agent."), violationType: "note", decision: "Admin note", admin: d.admin, notes });
+  return { success: true, message: "Note saved." };
+});
+
 // ── DISPATCHER (same shape as the old Apps Script doPost) ──
 export async function api(payload) {
   try {
@@ -741,6 +961,16 @@ export async function api(payload) {
       case "dismissNotif":      return await dismissNotif(payload);
       case "dismissAllNotifs":  return await dismissAllNotifs(payload);
       case "clearDismissal":    return await clearDismissal(payload);
+      case "getMonitoring": return await getMonitoring(payload);
+      case "saveMonitorConfig": return await saveMonitorConfig(payload);
+      case "syncFlags": return await syncFlags(payload);
+      case "reviewFlag": return await reviewFlag(payload);
+      case "imposeOffense": return await imposeOffense(payload);
+      case "requestClarification": return await requestClarification(payload);
+      case "updateClarification": return await updateClarification(payload);
+      case "restrictAgent": return await restrictAgent(payload);
+      case "removeRestriction": return await removeRestriction(payload);
+      case "addAdminNote": return await addAdminNote(payload);
       default: return { success: false, message: "Unknown action." };
     }
   } catch (err) {
