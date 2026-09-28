@@ -15,7 +15,9 @@
 //                            clientsCalledAgent, successfulCallsAgent,
 //                            clientsCalledAdmin, successfulCallsAdmin,
 //                            verificationStatus, wasOverdue }
-//   admins/{slug(username)} { username, password }
+//   admins/{slug(username)} { username, password, role?, managerName?, canEnforce? }
+//                           role "manager" = read-only + Cleared button for the teams they manage
+//                           (managerName must match the manager set in Manage Teams).
 //
 // SECURITY NOTE: this talks to Firestore directly from the browser
 // using wide-open rules (see firestore.rules). PINs and admin
@@ -714,7 +716,9 @@ async function adminLogin(data) {
   if (!snap.exists()) return { success: false, message: "Invalid username or password." };
   const v = snap.data();
   if (v.password.toString().trim() === data.password.trim())
-    return { success: true, adminId: snap.id, username: v.username };
+    return { success: true, adminId: snap.id, username: v.username,
+      role: v.role === "manager" ? "manager" : "admin",
+      managerName: v.role === "manager" ? (v.managerName || v.username) : "" };
   return { success: false, message: "Invalid username or password." };
 }
 
@@ -736,8 +740,11 @@ async function adminLogin(data) {
 // Enforcement actions need admins/{user}.canEnforce !== false (default allowed;
 // set canEnforce:false on an admin doc to make them view/review-only).
 const MON_DEFAULTS = { minCalls: 10, minSuccessRate: 50, periodDays: 7, overdueThresholds: [1, 2, 3], trackingStart: "" };
-const CLAR_STATUSES = ["Pending Clarification", "Clarification Received", "Verified", "Rejected", "Restriction Approved", "Restriction Cancelled"];
-const CLAR_OPEN = ["Pending Clarification", "Clarification Received", "Verified", "Restriction Approved"];
+// Clarification = the agent has spoken to their manager. It is created automatically when an agent is
+// restricted (the manager is notified); the manager then clicks Cleared once the agent has cleared their name.
+// "Restriction Approved" is a legacy status from the old flow — it still means "restricted, manager hasn't cleared yet".
+// An admin can lift the restriction at any time, cleared or not.
+const CLAR_PENDING = ["Pending Clarification", "Restriction Approved"];
 
 // Structured violation reason. One borrowing session (sourceRecordId) can carry one flag PER reason.
 const FLAG_REASONS = { CALL_LOG_VERIFICATION: "Call Log / Verification", OVERDUE_RETURN: "Overdue Return" };
@@ -754,8 +761,8 @@ const listAll = async (c) => (await getDocs(collection(db, c))).docs.map((d) => 
 async function assertEnforcer(user) {
   need(user, "Admin not identified — sign in again.");
   const s = await getDoc(doc(db, "admins", slug(user)));
-  if (!s.exists() || s.data().canEnforce === false)
-    throw new Error("Your admin account can't impose offenses or restrictions.");
+  if (!s.exists() || s.data().canEnforce === false || s.data().role === "manager")
+    throw new Error("Your account can't impose offenses or restrictions.");
 }
 async function writeAudit(e) {
   const id = "AUD-" + Date.now() + "-" + Math.random().toString(36).slice(2, 6);
@@ -974,33 +981,28 @@ const reassignOffense = guard(async (d) => {
   return { success: true, message: level ? "Offense reassigned: " + ORD_API[cur.level] + " → " + ORD_API[level] + "." : "Offense withdrawn from this flag." };
 });
 
-const requestClarification = guard(async (d) => {
-  await assertEnforcer(d.admin);
-  const reason = need(d.reason, "A reason is required.");
+// Manager action: the agent has spoken to them and cleared their name. Only the manager of the agent's team
+// can do this, only while the agent is restricted. It does not lift the restriction — an admin does that.
+const clearAgent = guard(async (d) => {
+  const user = need(d.manager, "Manager not identified — sign in again.");
+  const ms = await getDoc(doc(db, "admins", slug(user)));
+  if (!ms.exists() || ms.data().role !== "manager") throw new Error("Only a manager can mark an agent as cleared.");
+  const managerName = ms.data().managerName || ms.data().username;
   const as = await getDoc(doc(db, "agents", slug(need(d.agentName, "Missing agent."))));
   if (!as.exists()) throw new Error("Agent not found.");
-  if ((as.data().offenseLevel || 0) < 3) throw new Error("Clarification applies once the 3rd offense is confirmed.");
-  if ((await listAll("clarifications")).some((c) => c.agentName === d.agentName && CLAR_OPEN.includes(c.status)))
-    throw new Error("This agent already has an open clarification request.");
   const team = as.data().team ? await getDoc(doc(db, "teams", slug(as.data().team))) : null;
-  const id = "CLR-" + Date.now();
-  await setDoc(doc(db, "clarifications", id), { id, agentName: d.agentName, manager: team && team.exists() ? team.data().manager || "" : "",
-    reason, requestedAt: Timestamp.now(), requestedBy: d.admin, status: "Pending Clarification", notes: d.notes || "" });
-  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Manager clarification requested", admin: d.admin,
-    reason, notes: d.notes, clarificationStatus: "Pending Clarification" });
-  return { success: true, message: "Clarification requested from the agent's manager." };
-});
-
-const updateClarification = guard(async (d) => {
-  await assertEnforcer(d.admin);
-  if (!CLAR_STATUSES.includes(d.status)) throw new Error("Unknown status.");
-  const ref = doc(db, "clarifications", need(d.id, "Missing clarification."));
-  const s = await getDoc(ref);
-  if (!s.exists()) throw new Error("Clarification not found.");
-  await updateDoc(ref, { status: d.status, notes: d.notes || s.data().notes || "", updatedBy: d.admin, updatedAt: Timestamp.now() });
-  await writeAudit({ agentName: s.data().agentName, violationType: "restriction", decision: "Clarification status: " + d.status, admin: d.admin,
-    reason: d.reason, notes: d.notes, clarificationStatus: d.status });
-  return { success: true, message: "Clarification marked " + d.status + "." };
+  if (!team || !team.exists() || slug(team.data().manager || "") !== slug(managerName))
+    throw new Error("This agent isn't on one of your teams.");
+  if (!as.data().restricted) throw new Error("This agent isn't restricted.");
+  const c = await latestClarification(d.agentName);
+  if (c && c.status === "Cleared") throw new Error("This agent is already marked as cleared.");
+  if (!c || !CLAR_PENDING.includes(c.status)) throw new Error("Nothing is waiting for your clearance on this agent.");
+  const notes = (d.notes || "").toString().trim();
+  await updateDoc(doc(db, "clarifications", c.id), { status: "Cleared", clearedBy: ms.data().username, clearedAt: Timestamp.now(),
+    clearNotes: notes, updatedBy: ms.data().username, updatedAt: Timestamp.now() });
+  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Manager cleared agent", admin: ms.data().username,
+    actorRole: "manager", notes, clarificationStatus: "Cleared" });
+  return { success: true, message: d.agentName + " marked as cleared. An admin can now remove the restriction." };
 });
 
 async function latestClarification(agentName) {
@@ -1016,17 +1018,23 @@ const restrictAgent = guard(async (d) => {
   if (!s.exists()) throw new Error("Agent not found.");
   if ((s.data().offenseLevel || 0) < 3) throw new Error("An agent needs a confirmed 3rd offense before restriction.");
   if (s.data().restricted) throw new Error("Agent is already restricted.");
-  const c = await latestClarification(d.agentName);
-  if (!c || !["Clarification Received", "Verified", "Restriction Approved"].includes(c.status))
-    throw new Error("Request manager clarification and record the outcome (Received or Verified) before restricting.");
+  // The manager is notified automatically: a clarification waits for their Cleared click.
+  let c = await latestClarification(d.agentName);
+  if (!c || !CLAR_PENDING.includes(c.status)) {
+    const team = s.data().team ? await getDoc(doc(db, "teams", slug(s.data().team))) : null;
+    const cid = "CLR-" + Date.now();
+    c = { id: cid, agentName: d.agentName, manager: team && team.exists() ? team.data().manager || "" : "", reason,
+      requestedAt: Timestamp.now(), requestedBy: d.admin, status: "Pending Clarification", notes: d.notes || "" };
+    await setDoc(doc(db, "clarifications", cid), c);
+  }
   const lastO = (await listAll("offenses")).filter((o) => o.agentName === d.agentName && o.level === 3 && isActiveOff(o)).sort((x, y) => (y.at || "").localeCompare(x.at || ""))[0];
   const rid = "RST-" + Date.now();
   await setDoc(doc(db, "restrictions", rid), { id: rid, agentName: d.agentName, at: Timestamp.now(), by: d.admin, reason, active: true,
     offenseId: lastO ? lastO.id : null, clarificationId: c.id, removedAt: null, removedBy: null, removeReason: "" });
   await updateDoc(ref, { restricted: true, restrictionReason: reason, restrictedAt: Timestamp.now(), restrictedBy: d.admin, restrictionId: rid });
-  await updateDoc(doc(db, "clarifications", c.id), { status: "Restriction Approved", updatedBy: d.admin, updatedAt: Timestamp.now() });
+  await updateDoc(doc(db, "clarifications", c.id), { restrictionId: rid });
   await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Agent restricted", admin: d.admin, reason, notes: d.notes,
-    prevLevel: 3, newLevel: 3, restrictionStatus: "Restricted", clarificationStatus: "Restriction Approved" });
+    prevLevel: 3, newLevel: 3, restrictionStatus: "Restricted", clarificationStatus: "Pending Clarification" });
   return { success: true, message: d.agentName + " is now restricted." };
 });
 
@@ -1039,10 +1047,12 @@ const removeRestriction = guard(async (d) => {
   await updateDoc(ref, { restricted: false });
   if (s.data().restrictionId) await updateDoc(doc(db, "restrictions", s.data().restrictionId), { active: false, removedAt: Timestamp.now(), removedBy: d.admin, removeReason: reason });
   const c = await latestClarification(d.agentName);
-  if (c && c.status === "Restriction Approved")
-    await updateDoc(doc(db, "clarifications", c.id), { status: "Restriction Cancelled", updatedBy: d.admin, updatedAt: Timestamp.now() });
-  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Restriction removed", admin: d.admin, reason, notes: d.notes,
-    restrictionStatus: "Not restricted", clarificationStatus: c ? "Restriction Cancelled" : null });
+  const wasCleared = !!c && c.status === "Cleared", wasOpen = !!c && (wasCleared || CLAR_PENDING.includes(c.status));
+  if (wasOpen)
+    await updateDoc(doc(db, "clarifications", c.id), { status: "Restriction Cancelled", clearedBeforeRemoval: wasCleared, updatedBy: d.admin, updatedAt: Timestamp.now() });
+  await writeAudit({ agentName: d.agentName, violationType: "restriction", decision: "Restriction removed", admin: d.admin, reason,
+    notes: [d.notes, wasOpen && !wasCleared ? "Removed without manager clearance." : ""].filter(Boolean).join(" — "),
+    restrictionStatus: "Not restricted", clarificationStatus: wasOpen ? (wasCleared ? "Cleared" : "Not cleared") : null });
   return { success: true, message: "Restriction removed." };
 });
 
@@ -1096,8 +1106,7 @@ export async function api(payload) {
       case "reviewFlag": return await reviewFlag(payload);
       case "imposeOffense": return await imposeOffense(payload);
       case "reassignOffense": return await reassignOffense(payload);
-      case "requestClarification": return await requestClarification(payload);
-      case "updateClarification": return await updateClarification(payload);
+      case "clearAgent": return await clearAgent(payload);
       case "restrictAgent": return await restrictAgent(payload);
       case "removeRestriction": return await removeRestriction(payload);
       case "addAdminNote": return await addAdminNote(payload);

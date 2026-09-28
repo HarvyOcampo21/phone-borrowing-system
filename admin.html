@@ -333,6 +333,11 @@
 
     @keyframes fadeUp  {from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:translateY(0)}}
     @keyframes fadeDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
+      /* role: manager — hides everything marked admin-only */
+    body.role-manager .admin-only{display:none!important}
+    .mgr-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--border)}
+    .mgr-row:last-child{border-bottom:none}
+    .mgr-row .mgr-sub{font-size:.72rem;color:var(--muted);margin-top:2px;line-height:1.5}
   </style>
 </head>
 <body>
@@ -384,9 +389,9 @@
       <div class="nav-section">
         <div class="nav-label">Overview</div>
         <div class="nav-item active" onclick="showPage('dashboard',this)">Dashboard</div>
-        <div class="nav-item" onclick="showPage('records',this)">All Records</div>
+        <div class="nav-item admin-only" onclick="showPage('records',this)">All Records</div>
       </div>
-      <div class="nav-section">
+      <div class="nav-section admin-only">
         <div class="nav-label">Management</div>
         <div class="nav-item" onclick="showPage('agents',this)">
           Manage Agents
@@ -395,7 +400,7 @@
         <div class="nav-item" onclick="showPage('teams',this)">Manage Teams</div>
         <div class="nav-item" onclick="showPage('phones',this)">Manage Phones</div>
       </div>
-      <div class="nav-section">
+      <div class="nav-section admin-only">
         <div class="nav-label">Monitoring</div>
         <div class="nav-item" onclick="showPage('pending',this)">
           Pending Returns
@@ -416,7 +421,7 @@
         <div class="live-bar"><div class="live-dot"></div><span id="liveLabel">Connecting…</span></div>
         <div class="admin-info">
           <div class="admin-avatar" id="adminAvatar">A</div>
-          <div><div class="admin-name" id="adminName">Admin</div><div class="admin-role">Administrator</div></div>
+          <div><div class="admin-name" id="adminName">Admin</div><div class="admin-role" id="adminRole">Administrator</div></div>
         </div>
         <button class="btn-logout" onclick="doLogout()" type="button">Sign Out</button>
       </div>
@@ -433,6 +438,9 @@
             <p class="print-only" id="printMeta"></p>
           </div>
         </div>
+
+        <!-- MANAGER: agents waiting for clearance (managers only) -->
+        <div class="card no-print" id="mgrClearBox" style="display:none;border-color:var(--primary)"></div>
 
         <!-- FILTER BAR -->
         <div class="dash-filters no-print">
@@ -503,12 +511,11 @@
           <div class="card" id="compCard" style="border-color:var(--primary)">
             <div class="card-title">Agent compliance</div>
             <div id="compBody"></div>
-            <div class="mon-actions">
+            <div class="mon-actions admin-only" id="monActions">
               <div class="card-title" style="margin-bottom:8px">Enforcement actions — manual only</div>
-              <div class="field"><label>Reason (required for clarification and restriction changes)</label><input type="text" id="monReason" autocomplete="off"/></div>
+              <div class="field"><label>Reason (required to restrict or remove a restriction)</label><input type="text" id="monReason" autocomplete="off"/></div>
               <div class="field" style="margin-bottom:0"><label>Admin notes</label><textarea id="monNotes" style="min-height:56px"></textarea></div>
               <div class="mon-btns">
-                <button class="btn btn-info" id="btnClar" onclick="monAct('requestClarification')" type="button">Request Manager Clarification</button>
                 <button class="btn btn-danger btn-sm" id="btnRestrict" onclick="monAct('restrictAgent')" type="button">Restrict Agent</button>
                 <button class="btn btn-verify" id="btnUnrestrict" onclick="monAct('removeRestriction')" type="button">Remove Restriction</button>
                 <button class="btn btn-warn" onclick="monAct('addAdminNote')" type="button">Add Note</button>
@@ -527,9 +534,9 @@
             <div class="stat-card"><div class="stat-label">Total Calls Made</div><div class="stat-value" id="s-calls">—</div><div class="stat-sub">by returned units</div></div>
             <div class="stat-card green"><div class="stat-label">Success Rate</div><div class="stat-value" id="s-rate">—</div><div class="stat-sub">successful / total calls</div></div>
             <div class="stat-card red"><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
-            <div class="stat-card yellow"><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
-            <div class="stat-card green"><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
-            <div class="stat-card red" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
+            <div class="stat-card yellow admin-only"><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
+            <div class="stat-card green admin-only"><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
+            <div class="stat-card red admin-only" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
           </div>
 
           <div class="chart-grid">
@@ -851,7 +858,7 @@ function sanitizeId(s){return s.toString().replace(/[^a-zA-Z0-9]/g,'_');}
 
 function buildNotifications(){
   const list=[];
-  cacheAgents.forEach(a=>{
+  (isMgr()?[]:cacheAgents).forEach(a=>{
     if(a.pinResetRequested){
       list.push({
         key:`pin:${a.name}:${a.pinResetRequestedAt||''}`,
@@ -862,7 +869,7 @@ function buildNotifications(){
       });
     }
   });
-  cachePhones.forEach(p=>{
+  (isMgr()?[]:cachePhones).forEach(p=>{
     if(p.pendingReturn&&p.pendingRecordId){
       list.push({
         key:`return:${p.unitNo}:${p.pendingRecordId}`,
@@ -880,7 +887,7 @@ function buildNotifications(){
   // than needing the underlying data to change. The key includes borrowTime, so
   // a later overdue loan of the same unit gets a fresh notification even if an
   // earlier one was dismissed.
-  cachePhones.forEach(p=>{
+  (isMgr()?[]:cachePhones).forEach(p=>{
     if(p.available!==false||!p.borrowTime||p.physicallyReturned||p.pendingReturn)return;
     const dueMs=new Date(p.borrowTime).getTime()+OVERDUE_HOURS*3600000;
     if(!(Date.now()>=dueMs))return;
@@ -897,8 +904,10 @@ function buildNotifications(){
   // clean up the shared collection so it doesn't grow forever. Fire-and-forget:
   // harmless if it races with another admin doing the same cleanup.
   const liveKeys=new Set(list.map(n=>n.key));
+  // Dismissals are shared between admins and managers, so each side only cleans up its own keys.
+  const ownKey=k=>isMgr()?k.startsWith('mgr-clear:'):!k.startsWith('mgr-clear:');
   [...dismissedNotifs].forEach(k=>{
-    if(!liveKeys.has(k)){
+    if(ownKey(k)&&!liveKeys.has(k)){
       dismissedNotifs.delete(k);
       api({action:'clearDismissal',key:k}).catch(()=>{});
     }
@@ -972,6 +981,7 @@ function handleNotifClick(key){
   const n=lastNotifsByKey[key];
   closeNotifPanel();
   if(!n)return;
+  if(n.type==='mgr'){openMon(n.agentName);return;}
   if(n.type==='mon'){navigateToPage('monitoring');if(n.agentName)setTimeout(()=>openMon(n.agentName),100);return;}
   if(n.type==='pin'){
     navigateToPage('agents');
@@ -1004,6 +1014,41 @@ const state = {
   phones:  {data:[],filtered:[],page:1},
   records: {data:[],filtered:[],page:1}
 };
+
+// ── ROLE: admin vs manager ─────────────────────────────────
+// A manager sees the Dashboard only, limited to the teams they manage, with read-only offense/restriction
+// history and one action: marking a restricted agent as Cleared. The wrapper below scopes what they can read
+// and blocks every other action. Admin-only writes are also rejected server-side (firebase-api.js).
+let currentRole='admin',currentManagerName='';
+const isMgr=()=>currentRole==='manager';
+const MGR_ALLOWED=new Set(['getAgents','getTeams','getRecords','getMonitoring','clearAgent','getDismissedNotifs','dismissNotif','dismissAllNotifs','clearDismissal']);
+const MGR_EMPTY={getPhones:{success:true,phones:[]},getUnreturned:{success:true,unreturned:[]}};
+function installManagerApi(managerName){
+  if(window.__rawApi)return;
+  const raw=window.api;window.__rawApi=raw;
+  const sl=x=>String(x||'').trim().toLowerCase().replace(/\s+/g,'_').replace(/[^a-z0-9_\-]/g,'');
+  let scopeP=null,scopeAt=0;
+  const scope=()=>{
+    if(!scopeP||Date.now()-scopeAt>10000){scopeAt=Date.now();scopeP=(async()=>{
+      const [t,a]=await Promise.all([raw({action:'getTeams'}),raw({action:'getAgents'})]);
+      const teams=new Set((t.teams||[]).filter(x=>sl(x.manager)===sl(managerName)).map(x=>x.teamName));
+      const agents=new Set((a.agents||[]).filter(x=>x.team&&teams.has(x.team)).map(x=>x.name));
+      return {managerName,teams,agents};})();}
+    return scopeP;};
+  window.api=async p=>{
+    const act=p&&p.action;
+    if(MGR_EMPTY[act])return MGR_EMPTY[act];
+    if(!MGR_ALLOWED.has(act))return {success:false,message:"Managers can't do that."};
+    const res=await raw(p);
+    if(!res||!res.success)return res;
+    const sc=await scope(),mine=n=>sc.agents.has(n);
+    if(act==='getAgents')return {...res,agents:res.agents.filter(a=>mine(a.name))};
+    if(act==='getTeams')return {...res,teams:res.teams.filter(t=>sc.teams.has(t.teamName))};
+    if(act==='getRecords')return {...res,records:res.records.filter(r=>mine(r['Agent Name']))};
+    if(act==='getMonitoring'){const f=k=>(res[k]||[]).filter(x=>mine(x.agentName));
+      return {...res,flags:f('flags'),audit:f('audit'),clarifications:f('clarifications'),offenses:f('offenses'),restrictions:f('restrictions')};}
+    return res;};
+}
 
 // ── SESSION ──────────────────────────────────────────────────
 const saveS=d=>localStorage.setItem(SESSION_KEY,JSON.stringify(d));
@@ -1067,6 +1112,11 @@ async function doLogin(){
 }
 
 function startApp(admin){
+  currentRole=admin.role==='manager'?'manager':'admin';
+  currentManagerName=admin.managerName||'';
+  document.body.classList.toggle('role-manager',isMgr());
+  if(isMgr())installManagerApi(currentManagerName);
+  const roleEl=document.getElementById('adminRole');if(roleEl)roleEl.textContent=isMgr()?'Manager':'Administrator';
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   document.getElementById('adminName').textContent=admin.username;
@@ -1078,10 +1128,11 @@ function startApp(admin){
 }
 
 function setLiveLabel(){document.getElementById('liveLabel').textContent='Live · '+new Date().toLocaleTimeString();}
-function doLogout(){clrS();if(refreshTimer)clearInterval(refreshTimer);document.getElementById('appScreen').style.display='none';document.getElementById('loginScreen').style.display='flex';document.getElementById('loginUser').value='';document.getElementById('loginPass').value='';}
+function doLogout(){clrS();if(refreshTimer)clearInterval(refreshTimer);location.reload();} // reload drops cached data and any manager scoping
 
 // ── NAV ───────────────────────────────────────────────────
 function showPage(name,el){
+  if(isMgr()&&name!=='dashboard')return;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
@@ -2234,7 +2285,12 @@ async function loadHistory(){
 let mon={config:{minCalls:10,minSuccessRate:50,periodDays:7,overdueThresholds:[1,2,3],trackingStart:''},flags:[],audit:[],clars:[],offenses:[],restr:[]};
 let monFilter='all';
 const ORD=['','1st','2nd','3rd'];
-const CLAR_OPEN=['Pending Clarification','Clarification Received','Verified','Restriction Approved']; // must match firebase-api.js
+// Clarification = the agent has spoken to their manager. Created automatically when the agent is restricted;
+// the manager then marks them Cleared. 'Restriction Approved' is a legacy status that still means "waiting for the manager".
+const CLAR_PENDING=['Pending Clarification','Restriction Approved']; // must match firebase-api.js
+const latestClar=name=>mon.clars.filter(c=>c.agentName===name).sort((x,y)=>(y.requestedAt||'').localeCompare(x.requestedAt||''))[0];
+const clarState=c=>!c?'none':c.status==='Cleared'?'cleared':CLAR_PENDING.includes(c.status)?'pending':'closed';
+const clarLabel=c=>!c?'—':({'Cleared':'Cleared by manager','Pending Clarification':'Waiting for manager','Restriction Approved':'Waiting for manager','Restriction Cancelled':'Closed — restriction removed'})[c.status]||'Closed';
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtDay=t=>new Date(t).toLocaleDateString('en-GB',{day:'2-digit',month:'short'});
 const MON_FILTERS=[['all','All Agents'],['none','No Flags'],['has','Has Flags'],['overdue','Overdue Flags'],['calls','Call Activity Flags'],['rate','Success Ratio Flags'],['fcall','Call Log / Verification'],['fovd','Overdue Return'],['fboth','Both / Multiple Flags'],['o1','1st Offense'],['o2','2nd Offense'],['o3','3rd Offense'],['restricted','Restricted Agents']];
@@ -2312,6 +2368,7 @@ async function loadMonitoring(){
   if(!r.success)return;
   const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
   set(r);
+  if(isMgr()){renderNotifPanel();renderMgrClear();if(selectedAgentDash)renderCompliance();return;} // managers never run detection or write flags
   const fresh=detectFlags();
   if(fresh.length){
     const sy=await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh});
@@ -2328,6 +2385,19 @@ async function loadMonitoring(){
 // Alerts for the bell: potential offense thresholds, restriction eligibility, and call flags.
 function monNotifications(){
   const list=[];
+  if(isMgr()){ // managers only hear about restricted agents waiting for their clearance
+    cacheAgents.forEach(a=>{
+      const c=latestClar(a.name);
+      if(a.restricted&&clarState(c)==='pending')list.push({key:`mgr-clear:${a.name}:${c.id}`,type:'mgr',icon:'🔔',agentName:a.name,time:c.requestedAt||a.restrictedAt||'',
+        title:`<b>Clearance needed</b> — ${esc(a.name)} was restricted after a 3rd offense. Mark them cleared once they've spoken to you.`});
+    });
+    return list;
+  }
+  cacheAgents.forEach(a=>{
+    const c=latestClar(a.name);
+    if(a.restricted&&clarState(c)==='cleared')list.push({key:`cleared-by-mgr:${a.name}:${c.id}`,type:'mon',icon:'✅',agentName:a.name,time:c.clearedAt||'',
+      title:`<b>Cleared by manager</b> — ${esc(c.clearedBy||'the manager')} cleared ${esc(a.name)}. You can remove the restriction.`});
+  });
   cacheAgents.forEach(a=>{
     const s=agState(a);
     if(s.pot)list.push({key:`mon-ovd:${a.name}:${s.pot}:${s.ovd}`,type:'mon',icon:'⚠️',agentName:a.name,time:new Date().toISOString(),
@@ -2356,7 +2426,7 @@ async function saveMonConfig(){
 
 function renderMonitoring(){
   const states=cacheAgents.map(a=>({a,s:agState(a)}));
-  const attn=states.filter(x=>x.s.pAny||x.s.pot||(x.s.lvl>=3&&!x.s.restricted)).length;
+  const attn=states.filter(x=>x.s.pAny||x.s.pot||(x.s.lvl>=3&&!x.s.restricted)||(x.s.restricted&&clarState(latestClar(x.a.name))==='cleared')).length;
   const badge=document.getElementById('monBadge');badge.style.display=attn?'inline-block':'none';badge.textContent=attn;
   document.getElementById('monTabs').innerHTML=MON_FILTERS.map(([k,l])=>`<button class="filter-tab${k===monFilter?' active':''}" onclick="setMonFilter('${k}')" type="button">${l}</button>`).join('');
   const q=(document.getElementById('monSearch').value||'').toLowerCase();
@@ -2365,7 +2435,7 @@ function renderMonitoring(){
   const yn=n=>n?`<span class="tag tag-flagged">Yes${n>1?' ('+n+')':''}</span>`:'<span class="tag tag-unverified">No</span>';
   document.getElementById('monBody').innerHTML=rows.length?rows.map(({a,s})=>`<tr>
     <td style="font-weight:500">${esc(a.name)}<div style="font-size:.68rem;color:var(--muted)">${esc(a.team||'No team')}</div></td>
-    <td>${s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">Active</span>'}</td>
+    <td>${s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>'+(clarState(latestClar(a.name))==='cleared'?' <span class="tag tag-verified">Cleared by manager</span>':''):'<span class="tag tag-verified">Active</span>'}</td>
     <td>${s.ovd}${s.pOvd?` <span class="tag tag-overdue">${s.pOvd} to review</span>`:''}</td>
     <td>${yn(s.cCallAct)}</td><td>${yn(s.pRate)}</td>
     <td>${lvlText(s)}${s.pot?` <span class="tag tag-overdue">Potential ${ORD[s.pot]}</span>`:''}</td>
@@ -2424,7 +2494,7 @@ function flagCard(f,s,offs,rests,clar){
     ${(f.reason||f.notes)?row('Admin note',esc([f.reason,f.notes].filter(Boolean).join(' — '))):''}
     ${row('Enforcement',off?`<b>${ORD[off.level]} Offense</b> assigned ${fmt(off.at)} by ${esc(off.admin)}`:f.status==='dismissed'?'No offense (dismissed)':'No offense assigned — use Flag history below')}
     ${off&&off.level===3?row('Restriction',rest?`Restricted ${fmt(rest.at)} by ${esc(rest.by)}`:'Not restricted'):''}
-    ${off&&off.level===3&&clar?row('Manager clarification',esc(clar.status)):''}
+    ${off&&off.level===3&&clar?row('Manager clarification',esc(clarLabel(clar))):''}
     <div class="mon-btns">${f.status==='pending'?btn('btn-verify','confirm','Confirm Flag')+btn('btn-danger btn-sm','dismiss','Dismiss Flag'):''}${linkBtns(f)}</div></div>`;
 }
 
@@ -2573,12 +2643,11 @@ function renderCompliance(name){
   const a=cacheAgents.find(x=>x.name===name);if(!body||!a)return;
   const s=agState(a),offs=mon.offenses.filter(o=>o.agentName===name).sort(byDesc('at')),rests=mon.restr.filter(r=>r.agentName===name).sort(byDesc('at'));
   const clars=mon.clars.filter(c=>c.agentName===name).sort(byDesc('requestedAt')),clar=clars[0];
-  const openClar=!!clar&&CLAR_OPEN.includes(clar.status),eligible=s.lvl>=3&&!s.restricted;
-  const clarOk=!!clar&&['Clarification Received','Verified','Restriction Approved'].includes(clar.status);
+  const cst=clarState(clar),eligible=s.lvl>=3&&!s.restricted;
   const rl=s.restricted?['tag-restricted','RESTRICTED']:eligible?['tag-flagged','ELIGIBLE FOR RESTRICTION']:['tag-verified','NOT RESTRICTED'];
   const cell=(l,v)=>`<div>${l}<b>${v}</b></div>`,yn=n=>n?'<span style="color:var(--red)">Yes</span>':'No';
   const alerts=[s.pAny?`⚠ ${s.pAny} flag${s.pAny>1?'s':''} awaiting review.`:'',s.pot?`Overdue count reaches the threshold for a potential ${ORD[s.pot]} offense — nothing is imposed until you decide.`:'',
-    eligible?'Eligible for restriction. Request manager clarification, then restrict manually.':''].filter(Boolean);
+    eligible?"Eligible for restriction. Restricting notifies the agent's manager.":''].filter(Boolean).filter(()=>!isMgr());
   const isActive=f=>f.status==='pending'||(f.status==='confirmed'&&!f.offenseLevel);
   const active=s.fl.filter(isActive).sort((x,y)=>(x.status==='pending'?0:1)-(y.status==='pending'?0:1)||fdate(y).localeCompare(fdate(x)));
   const dism=s.fl.filter(f=>!isActive(f)).sort((x,y)=>fdate(y).localeCompare(fdate(x)));
@@ -2594,20 +2663,19 @@ function renderCompliance(name){
   const steps=[['OVERDUE_RETURN','Overdue Return'],['CALL_LOG_VERIFICATION','Call Log / Verification']].map(([r,l])=>`<div style="font-weight:600;font-size:.8rem;margin:10px 0 2px">${l} offenses <span style="font-weight:400;color:var(--muted)">— counted separately</span></div>${stepsFor(r)}`).join('');
   const supHtml=sup.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Superseded / withdrawn assignments — ${sup.length} (audit trail)</summary>${sup.map(o=>`<div class="off-step" style="color:var(--muted)"><span>↺</span><div><b>${ORD[o.level]} Offense</b> — ${esc(offIncident(o))} · incident ${fmt(offIncidentAt(o))}<br>Assigned ${fmt(o.at)} by ${esc(o.admin)} — ${esc(o.reason)}<br>${o.replacedById?`Reassigned to ${ORD[o.replacedByLevel]} Offense`:'Withdrawn'} ${fmt(o.supersededAt)} by ${esc(o.supersededBy)} — ${esc(o.supersededReason)}</div></div>`).join('')}</details>`:'';
   const restHtml=rests.map(r=>`<div class="off-step"><span>${r.active?'🔴':'🟢'}</span><div><b>${r.active?'Restricted':'Restriction removed'}</b> · Applied ${fmt(r.at)} by ${esc(r.by)} — ${esc(r.reason)}${r.active?'':`<br>Removed ${fmt(r.removedAt)} by ${esc(r.removedBy)} — ${esc(r.removeReason)}`}</div></div>`).join('');
-  const cbtn=(c,st,l)=>`<button class="btn btn-info" onclick="monClarStatus('${esc(c.id)}','${st}')" type="button">${l}</button>`;
-  const clarHtml=clars.length?clars.map((c,i)=>{const st=c.status,open=i===0&&CLAR_OPEN.includes(st)&&st!=='Restriction Approved';
-    return `<div class="off-step"><span>${CLAR_OPEN.includes(st)?'🟠':'⚪'}</span><div><b>${esc(st)}</b><br>Requested: ${fmt(c.requestedAt)} by ${esc(c.requestedBy)}${c.manager?' · Manager: '+esc(c.manager):''}<br>Reason: ${esc(c.reason)}${c.notes?'<br>Notes: '+esc(c.notes):''}${c.updatedAt?`<br>Last update: ${fmt(c.updatedAt)} by ${esc(c.updatedBy)}`:''}
-      ${open?`<div class="mon-btns" style="margin-top:4px">${st==='Pending Clarification'?cbtn(c,'Clarification Received','Mark Received'):''}${st!=='Verified'?cbtn(c,'Verified','Mark Verified'):''}${cbtn(c,'Rejected','Mark Rejected')}</div><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Records the manager's response, timestamped with your name. Uses the notes field below if filled.</div>`:''}</div></div>`;}).join(''):'<div style="font-size:.8rem;color:var(--muted)">Not requested.</div>';
+  const clarHtml=clars.length?clars.map((c,i)=>{const st=clarState(c),live=i===0&&st==='pending'&&a.restricted;
+    return `<div class="off-step"><span>${st==='cleared'?'✅':st==='pending'?'🟠':'⚪'}</span><div><b>${esc(clarLabel(c))}</b><br>Manager notified: ${fmt(c.requestedAt)}${c.requestedBy?' by '+esc(c.requestedBy):''}${c.manager?' · Manager: '+esc(c.manager):''}<br>Reason: ${esc(c.reason)}${c.clearedAt?`<br>Cleared: ${fmt(c.clearedAt)} by ${esc(c.clearedBy)}${c.clearNotes?' — '+esc(c.clearNotes):''}`:''}${c.status==='Restriction Cancelled'&&c.updatedAt?`<br>Restriction removed ${fmt(c.updatedAt)} by ${esc(c.updatedBy)}${c.clearedBeforeRemoval===false?' — without manager clearance':''}`:''}
+      ${live&&isMgr()?`<div class="mon-btns" style="margin-top:4px"><button class="btn btn-verify" data-a="${esc(name)}" onclick="openClearModal(this.dataset.a)" type="button">Mark as Cleared</button></div><div style="font-size:.7rem;color:var(--muted);margin-top:2px">Only mark this once ${esc(name)} has spoken to you and cleared their name. An admin then removes the restriction.</div>`:''}</div></div>`;}).join(''):'<div style="font-size:.8rem;color:var(--muted)">No clarification yet — the manager is notified when the agent is restricted.</div>';
   body.innerHTML=`<div class="mon-summary">${cell('Status',s.restricted?'<span class="tag tag-restricted">RESTRICTED</span>':'<span class="tag tag-verified">ACTIVE</span>')}${cell('Offense level',lvlText(s))}
-    ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clar.status):'Not requested')}
+    ${cell('Restriction',`<span class="tag ${rl[0]}">${rl[1]}</span>`)}${cell('Manager clarification',clar?esc(clarLabel(clar)):'—')}
     ${cell('Overdue count',s.ovd)}${cell('Call activity flag',s.cCallAct)}${cell('Success-rate flag',yn(s.pRate))}${cell('Flags awaiting review',s.pAny)}</div>
     ${alerts.length?`<div class="mon-alert">${alerts.map(esc).join('<br>')}</div>`:''}
-    ${reconcile(name,s)}${secH('Active flags')}<div style="font-size:.78rem;margin-bottom:8px">Overdue Return: <b>${s.cOvd}</b> · Call Log / Verification: <b>${s.cCall}</b> · Total flags: <b>${active.length}</b></div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
+    ${isMgr()?'':`    ${reconcile(name,s)}${secH('Active flags')}<div style="font-size:.78rem;margin-bottom:8px">Overdue Return: <b>${s.cOvd}</b> · Call Log / Verification: <b>${s.cCall}</b> · Total flags: <b>${active.length}</b></div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
     ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Reviewed flags — ${dism.length} flag${dism.length>1?'s':''} (dismissed or already turned into an offense)</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
-    ${flagHistory(name,s)}
-    ${secH('Offense history')}<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">Read-only summary. Offenses are assigned or changed from the specific flag in Flag history.</div>${steps}${supHtml}
+    ${flagHistory(name,s)}`}
+    ${secH('Offense history')}<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">${isMgr()?'Read-only summary.':'Read-only summary. Offenses are assigned or changed from the specific flag in Flag history.'}</div>${steps}${supHtml}
     ${secH('Restriction status')}
-    <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b><br>Manager clarification: ${clar?esc(clar.status)+(clar.manager?' · Manager: '+esc(clar.manager):''):'Not requested'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmt(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
+    <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b><br>Manager clarification: ${clar?esc(clarLabel(clar))+(clar.manager?' · Manager: '+esc(clar.manager):''):'—'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmt(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
     ${secH('Manager clarification')}${clarHtml}`;
   // COMPLIANCE TIMELINE — chronological (oldest first) by the real event / action timestamp.
   const ev=[];
@@ -2620,15 +2688,15 @@ function renderCompliance(name){
     else if(d==='Offense imposed'){ic='✓';title=`${ORD[e.newLevel]} Offense assigned`;}
     else if(d==='Offense reassigned'){ic='↺';title=`Offense reassigned: ${ORD[e.prevLevel]} → ${ORD[e.newLevel]}`;}
     else if(d==='Offense withdrawn'){ic='↺';title=`${ORD[e.prevLevel]} Offense withdrawn`;}
-    else if(/restricted/i.test(d)){ic='🔴';}else if(/clarification/i.test(d)){ic='👤';}else if(/note/i.test(d)){ic='⚪';}
-    ev.push({t:e.at,ic,title,admin:e.admin,sub:[incTxt,e.reason,e.notes].filter(Boolean).join(' — ')});
+    else if(/cleared/i.test(d)){ic='✅';}else if(/restricted/i.test(d)){ic='🔴';}else if(/clarification/i.test(d)){ic='👤';}else if(/note/i.test(d)){ic='⚪';}
+    ev.push({t:e.at,ic,title,admin:e.admin,role:e.actorRole,sub:[incTxt,e.reason,e.notes].filter(Boolean).join(' — ')});
   });
   ev.sort(byAsc('t'));
   const tl=document.getElementById('compTimeline');
-  if(tl){const wasOpen=!!tl.querySelector('details[open]');tl.innerHTML=`<details${wasOpen?' open':''}><summary style="cursor:pointer">${secH('Compliance timeline — '+ev.length+' event'+(ev.length!==1?'s':'')+' (click to show / hide)').replace('class="mon-sec"','class="mon-sec" style="display:inline-block"')}</summary>`+(ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · Admin: '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>')+'</details>';}
+  if(tl){const wasOpen=!!tl.querySelector('details[open]');tl.innerHTML=`<details${wasOpen?' open':''}><summary style="cursor:pointer">${secH('Compliance timeline — '+ev.length+' event'+(ev.length!==1?'s':'')+' (click to show / hide)').replace('class="mon-sec"','class="mon-sec" style="display:inline-block"')}</summary>`+(ev.map(e=>`<div class="tl-item"><span class="tl-t">${fmt(e.t)}</span><div>${e.ic} <b>${esc(e.title)}</b>${e.admin?' · '+(e.role==='manager'?'Manager':'Admin')+': '+esc(e.admin):''}${e.sub?`<div style="color:var(--muted)">${esc(e.sub)}</div>`:''}</div></div>`).join('')||'<div style="font-size:.8rem;color:var(--muted)">No history yet.</div>')+'</details>';}
   const dis=(id,v)=>{document.getElementById(id).disabled=v;};
-  dis('btnClar',s.lvl<3||openClar);dis('btnRestrict',!eligible||!clarOk);dis('btnUnrestrict',!s.restricted);
-  document.getElementById('monHint').textContent=eligible&&!clarOk?(clar?'Restriction unlocks once the clarification is marked Received or Verified.':'Restriction unlocks after a manager clarification is requested and received.'):'';
+  dis('btnRestrict',!eligible);dis('btnUnrestrict',!s.restricted);
+  document.getElementById('monHint').textContent=eligible?"Restricting notifies the agent's manager, who marks them cleared once they've spoken.":s.restricted&&cst==='cleared'?'The manager has cleared this agent — you can remove the restriction.':s.restricted&&cst==='pending'?"Waiting for the manager to mark this agent cleared. You can still remove the restriction yourself.":'';
 }
 
 async function monCall(payload){
@@ -2644,7 +2712,34 @@ async function monCall(payload){
 }
 const monAct=action=>monCall({action});
 function monFlag(flagId,act){return monCall({action:'reviewFlag',flagId,decision:act});} // confirm / dismiss only — offenses are assigned through the confirmation modal
-function monClarStatus(id,status){return monCall({action:'updateClarification',id,status});}
+
+// ── MANAGER: clearance box on the dashboard ──
+function renderMgrClear(){
+  const box=document.getElementById('mgrClearBox');if(!box)return;
+  if(!isMgr()){box.style.display='none';return;}
+  const rows=cacheAgents.filter(a=>a.restricted).map(a=>({a,c:latestClar(a.name)}));
+  const wait=rows.filter(x=>clarState(x.c)==='pending'),done=rows.filter(x=>clarState(x.c)==='cleared');
+  const line=({a,c},btn)=>`<div class="mgr-row"><div><b>${esc(a.name)}</b> <span style="color:var(--muted);font-size:.78rem">${esc(a.team||'')}</span>
+    <div class="mgr-sub">Restricted ${fmt(a.restrictedAt)}${a.restrictedBy?' by '+esc(a.restrictedBy):''}${a.restrictionReason?' — '+esc(a.restrictionReason):''}${btn?'':`<br>Cleared ${fmt(c.clearedAt)} — waiting for an admin to remove the restriction`}</div></div>
+    <div class="mon-btns" style="margin:0">${btn?`<button class="btn btn-verify" data-a="${esc(a.name)}" onclick="openClearModal(this.dataset.a)" type="button">Cleared</button>`:''}<button class="btn btn-info" data-a="${esc(a.name)}" onclick="openMon(this.dataset.a)" type="button">Open</button></div></div>`;
+  box.style.display='';
+  box.innerHTML=`<div class="card-title">Agents waiting for your clearance${wait.length?` <span class="tag tag-flagged">${wait.length}</span>`:''}</div>`
+    +(wait.length?`<div style="font-size:.78rem;color:var(--muted);margin-bottom:4px">Click <b>Cleared</b> once the agent has spoken to you and cleared their name. An admin then removes the restriction.</div>`+wait.map(x=>line(x,true)).join('')
+      :'<div style="font-size:.8rem;color:var(--muted)">No agents on your teams are waiting for clearance.</div>')
+    +(done.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Cleared — waiting for an admin (${done.length})</summary>${done.map(x=>line(x,false)).join('')}</details>`:'');
+}
+function openClearModal(name){
+  openMonModal('Mark '+name+' as cleared',`<div style="font-size:.85rem;line-height:1.6">Confirm that <b>${esc(name)}</b> has spoken to you and cleared their name. This tells the admins the restriction can be lifted. It does not lift it yourself.</div>
+    <div class="field" style="margin-top:14px"><label>Note for the admins (optional)</label><textarea id="clearNotes" style="min-height:56px"></textarea></div>
+    <div class="mon-btns"><button class="btn btn-sm" onclick="closeMonModal()" type="button" style="border:1.5px solid var(--border);color:var(--muted)">Cancel</button><button class="btn btn-verify" id="clearConfirm" data-a="${esc(name)}" onclick="confirmClear(this.dataset.a)" type="button">Mark as Cleared</button></div>`);
+}
+async function confirmClear(name){
+  const btn=document.getElementById('clearConfirm'),notes=(document.getElementById('clearNotes')||{}).value||'';
+  if(btn)btn.disabled=true;
+  const res=await api({action:'clearAgent',manager:currentAdminUsername,agentName:name,notes:notes.trim()});
+  if(!res.success){toast('❌ '+res.message,'error');if(btn)btn.disabled=false;return;}
+  toast('✅ '+res.message,'success');closeMonModal();await monRefresh();
+}
 
 function renderBackfill(res){
   const box=document.getElementById('monBackfill');if(!box)return;
