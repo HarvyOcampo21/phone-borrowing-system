@@ -2459,7 +2459,11 @@ function flagHistory(name,s){
   R.missing.forEach(m=>{grp(m.r['Record ID'],m.r['Borrow Time']||'',m.r['Record ID']).missing=m.reasons;});
   const list=Object.values(G).sort((x,y)=>(y.t||'').localeCompare(x.t||''));
   if(!list.length)return secH('Flag history')+'<div style="font-size:.8rem;color:var(--muted)">No flags or flagged records yet.</div>';
-  return secH('Flag history')+'<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">One borrowing session can carry one flag per reason. Each flag is reviewed and enforced on its own. Times are when the original event happened.</div>'+list.map(g=>{
+  // Resolved = dismissed, or confirmed AND already turned into an offense. Those are tucked away; anything still needing a decision stays visible.
+  const needsAction=f=>f.status==='pending'||(f.status==='confirmed'&&!curOff(f)&&!f.offenseLevel);
+  const render=(list,mode)=>list.map(g=>{
+    g={...g,flags:g.flags.filter(f=>mode==='open'?needsAction(f):!needsAction(f)),missing:mode==='open'?g.missing:[]};
+    if(!g.flags.length&&!g.missing.length)return '';
     const r=g.rid&&cacheRecords.find(x=>x['Record ID']===g.rid),f0=g.flags[0];
     const head=r?`<b>Unit ${esc(r['Phone Unit'])}</b> <span class="fh-time">${fmt(r['Borrow Time'])}</span><div class="fh-sub">Calls: ${esc(r['Clients Called (Agent)'])} · Successful: ${esc(r['Successful Calls (Agent)'])} · Return: ${r['Return Time']?fmt(r['Return Time']):'Not returned'}</div>`
       :`<b>${esc(incident(f0))}</b> <span class="fh-time">${fmt(g.t)}</span>`;
@@ -2472,7 +2476,12 @@ function flagHistory(name,s){
     const miss=g.missing.length?`<div class="fh-flag"><div class="fh-main"><span style="color:var(--red)">No compliance flag yet:</span> ${g.missing.map(k=>esc(REASON_LABEL[k])).join(', ')} — backfill to review</div></div>`:'';
     return `<div class="fh-group"><div class="fh-head">${head}</div>${rows}${miss}</div>`;
   }).join('');
+  const openHtml=render(list,'open'),doneHtml=render(list,'done'),nDone=list.reduce((n,g)=>n+g.flags.filter(f=>!needsAction(f)).length,0);
+  return secH('Flag history')+'<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">One borrowing session can carry one flag per reason. Each flag is reviewed and enforced on its own. Times are when the original event happened. Flags that still need a decision stay here; once a flag is dismissed or has an offense it moves to <b>Reviewed flag history</b> below.</div>'
+    +(openHtml||'<div style="font-size:.8rem;color:var(--muted);margin:6px 0">Nothing waiting — every flag has been reviewed.</div>')
+    +(nDone?`<details id="fhResolved" style="margin-top:8px"${fhOpen?' open':''} ontoggle="fhOpen=this.open"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Reviewed flag history — ${nDone} flag${nDone!==1?'s':''} (click to show / hide)</summary><div style="margin-top:8px">${doneHtml}</div></details>`:'');
 }
+let fhOpen=false;
 function openReview(id){
   const f=flagOf(id);if(!f)return;
   const row=(l,v)=>`<div class="flag-row"><span>${l}</span><div>${v}</div></div>`;
