@@ -978,10 +978,30 @@
       let pendingUnitAfterLogin = null;
       let toastTimer = null;
 
+      // ── POLLING ──────────────────────────────────────────
+      // Background poll every REFRESH_MS (was 20s — with several tabs open,
+      // including background ones, this was the single biggest source of
+      // read volume). Fully paused while the tab is hidden, with one
+      // immediate catch-up refresh the moment it becomes visible again.
+      const REFRESH_MS = 60000; // 60s
+      let pollTimer = null;
+      function startPolling() {
+        stopPolling();
+        if (document.visibilityState === "hidden") return; // resumes on visibilitychange
+        pollTimer = setInterval(refreshSilent, REFRESH_MS);
+      }
+      function stopPolling() {
+        if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+      }
+      document.addEventListener("visibilitychange", () => {
+        if (document.visibilityState === "hidden") { stopPolling(); }
+        else { refreshSilent(); startPolling(); }
+      });
+
       window.addEventListener("load", () => {
         restoreSession();
         loadPhones();
-        setInterval(refreshSilent, 20000);
+        startPolling();
       });
 
       // ---------- session ----------

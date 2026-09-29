@@ -835,6 +835,46 @@ let refreshTimer      = null;
 let writeLockedUntil  = 0;
 let parsedXmlAgents   = [];
 
+// ── POLLING ──────────────────────────────────────────────
+// Background poll every REFRESH_MS (was 30s — most of the read volume came
+// from this timer running in every open tab, including hidden ones). Fully
+// paused while the tab is hidden, with one immediate catch-up refresh the
+// moment it becomes visible again, then polling resumes.
+const REFRESH_MS = 90000; // 90s
+function startPolling(){
+  stopPolling();
+  if(document.visibilityState==='hidden')return; // resumes on visibilitychange
+  refreshTimer=setInterval(()=>{if(Date.now()>writeLockedUntil)refreshAll();},REFRESH_MS);
+}
+function stopPolling(){if(refreshTimer){clearInterval(refreshTimer);refreshTimer=null;}}
+document.addEventListener('visibilitychange',()=>{
+  if(!currentAdminUsername)return; // not logged in yet — nothing polling
+  if(document.visibilityState==='hidden'){stopPolling();}
+  else{refreshAll();startPolling();}
+});
+
+// ── MONITORING LOAD THROTTLE ─────────────────────────────
+// getMonitoring/detectFlags/syncFlags used to run on every 30s tick even
+// though the Monitoring page and agent compliance panel are rarely open.
+// Now it only runs: when the Monitoring page is open, when the compliance
+// panel for an agent is open, right after a monitoring write (those call
+// loadMonitoring() directly), or at most every MON_INTERVAL_MS in the
+// background — the sidebar badge/notifications just reuse the cached `mon`
+// data in between.
+const MON_INTERVAL_MS = 5*60000; // 5 min
+let lastMonLoad = 0;
+let monLastRecordsSig = '';
+function monPanelOpen(){
+  if(document.getElementById('page-monitoring').classList.contains('active'))return true;
+  return document.getElementById('page-dashboard').classList.contains('active')
+    && !!selectedAgentDash
+    && document.getElementById('agentDashCard').classList.contains('show');
+}
+function maybeLoadMonitoring(){
+  if(monPanelOpen()||Date.now()-lastMonLoad>MON_INTERVAL_MS)return loadMonitoring();
+  return Promise.resolve();
+}
+
 let cacheRecords=[], cacheAgents=[], cachePhones=[], cacheTeams=[];
 let chartCalls=null, chartRate=null, chartVerify=null, chartTrend=null;
 let chartAgentTrend=null, chartAgentVerify=null;
@@ -1021,7 +1061,7 @@ const state = {
 // and blocks every other action. Admin-only writes are also rejected server-side (firebase-api.js).
 let currentRole='admin',currentManagerName='';
 const isMgr=()=>currentRole==='manager';
-const MGR_ALLOWED=new Set(['getAgents','getTeams','getRecords','getMonitoring','clearAgent','getDismissedNotifs','dismissNotif','dismissAllNotifs','clearDismissal']);
+const MGR_ALLOWED=new Set(['getAgents','getTeams','getRecords','getMonitoring','getAgentAudit','clearAgent','getDismissedNotifs','dismissNotif','dismissAllNotifs','clearDismissal']);
 const MGR_EMPTY={getPhones:{success:true,phones:[]},getUnreturned:{success:true,unreturned:[]}};
 function installManagerApi(managerName){
   if(window.__rawApi)return;
@@ -1047,6 +1087,7 @@ function installManagerApi(managerName){
     if(act==='getRecords')return {...res,records:res.records.filter(r=>mine(r['Agent Name']))};
     if(act==='getMonitoring'){const f=k=>(res[k]||[]).filter(x=>mine(x.agentName));
       return {...res,flags:f('flags'),audit:f('audit'),clarifications:f('clarifications'),offenses:f('offenses'),restrictions:f('restrictions')};}
+    if(act==='getAgentAudit')return mine(p.agentName)?res:{success:false,message:"Managers can't do that."};
     return res;};
 }
 
@@ -1123,12 +1164,11 @@ function startApp(admin){
   document.getElementById('adminAvatar').textContent=admin.username[0].toUpperCase();
   currentAdminUsername=admin.username||'';
   loadAll();
-  if(refreshTimer)clearInterval(refreshTimer);
-  refreshTimer=setInterval(()=>{if(Date.now()>writeLockedUntil)refreshAll();},30000);
+  startPolling();
 }
 
 function setLiveLabel(){document.getElementById('liveLabel').textContent='Live · '+new Date().toLocaleTimeString();}
-function doLogout(){clrS();if(refreshTimer)clearInterval(refreshTimer);location.reload();} // reload drops cached data and any manager scoping
+function doLogout(){clrS();stopPolling();location.reload();} // reload drops cached data and any manager scoping
 
 // ── NAV ───────────────────────────────────────────────────
 function showPage(name,el){
@@ -1143,7 +1183,7 @@ function showPage(name,el){
   if(name==='unreturned') loadUnreturned();
   if(name==='history')    populateHistoryUnits();
   if(name==='teams')      renderTeamsTable();
-  if(name==='monitoring') renderMonitoring();
+  if(name==='monitoring'){renderMonitoring();loadMonitoring();} // opening the page: get current data now, not up to MON_INTERVAL_MS stale
 }
 
 function jumpToAgentsFromDashboard(){
@@ -1172,7 +1212,7 @@ async function loadAll(){
     updatePendingBadge();
     updateAgentPinBadge();
     renderDashboard();
-    await loadMonitoring();
+    await loadMonitoring(); // always fresh on initial login / full reload
     setLiveLabel();
   }catch{}
 }
@@ -1238,7 +1278,7 @@ async function refreshAll(){
       renderDashboard();
       if(selectedAgentDash)renderAgentDashboard(selectedAgentDash);
     }
-    await loadMonitoring();
+    await maybeLoadMonitoring();
     setLiveLabel();
   }catch{}
 }
@@ -1421,6 +1461,7 @@ function selectAgentDash(name){
   document.getElementById('agentDashCard').classList.add('show');
   document.getElementById('overviewSection').style.display='none';
   renderAgentDashboard(name);
+  loadMonitoring(); // opening the compliance panel: get current data now, not up to MON_INTERVAL_MS stale
 }
 
 function clearAgentDash(){
@@ -2283,6 +2324,22 @@ async function loadHistory(){
 //  AGENT MONITORING — automated detection, manual enforcement
 // ══════════════════════════════════════════════════════════
 let mon={config:{minCalls:10,minSuccessRate:50,periodDays:7,overdueThresholds:[1,2,3],trackingStart:''},flags:[],audit:[],clars:[],offenses:[],restr:[]};
+
+// ── PER-AGENT AUDIT TRAIL ────────────────────────────────
+// auditLog grows with every admin action across every agent, so the
+// compliance timeline for ONE agent now fetches only that agent's entries
+// (where agentName==) instead of riding along on the whole-collection read
+// in getMonitoring. Cached per agent for AGENT_AUDIT_TTL; invalidated
+// immediately after any monitoring write for the agent currently open.
+const AGENT_AUDIT_TTL=5*60000;
+let agentAuditCache={}; // name -> {data:[...], t}
+async function ensureAgentAudit(name){
+  const c=agentAuditCache[name];
+  if(c&&Date.now()-c.t<AGENT_AUDIT_TTL)return c.data;
+  const r=await api({action:'getAgentAudit',agentName:name});
+  if(r.success){agentAuditCache[name]={data:r.audit,t:Date.now()};return r.audit;}
+  return c?c.data:[];
+}
 let monFilter='all';
 // Offense numbers are uncapped: once a restriction is lifted, the next offense is the 4th, then 5th, ...
 const ORD=new Proxy({},{get:(_,k)=>{const n=+k;if(!Number.isInteger(n)||n<1)return '';const t=n%100;return n+((t>=11&&t<=13)?'th':({1:'st',2:'nd',3:'rd'}[n%10]||'th'));}});
@@ -2366,19 +2423,28 @@ function agState(a){
 }
 
 async function loadMonitoring(){
+  lastMonLoad=Date.now();
   const r=await api({action:'getMonitoring'});
   if(!r.success)return;
   const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
   set(r);
   if(isMgr()){renderNotifPanel();renderMgrClear();if(selectedAgentDash)renderCompliance();return;} // managers never run detection or write flags
-  const fresh=detectFlags();
-  if(fresh.length){
-    const sy=await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh});
-    if(sy.success){const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);}
-    else if(!window.__syncWarned){window.__syncWarned=true;toast('❌ Automatic flag sync failed: '+sy.message,'error');}
+  // detectFlags() itself is pure client-side JS (no Firestore read) — but the
+  // syncFlags() call it can trigger IS a write+read, so skip re-running the
+  // detect/sync pass when the underlying borrowing records haven't changed
+  // since the last time we did this (nothing new to detect).
+  const recSig=cacheRecords.length+':'+(cacheRecords[cacheRecords.length-1]?.['Record ID']||'');
+  if(recSig!==monLastRecordsSig){
+    monLastRecordsSig=recSig;
+    const fresh=detectFlags();
+    if(fresh.length){
+      const sy=await api({action:'syncFlags',admin:currentAdminUsername,flags:fresh});
+      if(sy.success){const r2=await api({action:'getMonitoring'});if(r2.success)set(r2);}
+      else if(!window.__syncWarned){window.__syncWarned=true;toast('❌ Automatic flag sync failed: '+sy.message,'error');}
+    }
+    if(!window.__stamped&&mon.flags.some(f=>!f.flagReason&&REASON_OF_TYPE[f.type])){window.__stamped=true;
+      const st=await api({action:'stampFlagReasons'});if(st.success&&st.updated){const r3=await api({action:'getMonitoring'});if(r3.success)set(r3);}}
   }
-  if(!window.__stamped&&mon.flags.some(f=>!f.flagReason&&REASON_OF_TYPE[f.type])){window.__stamped=true;
-    const st=await api({action:'stampFlagReasons'});if(st.success&&st.updated){const r3=await api({action:'getMonitoring'});if(r3.success)set(r3);}}
   mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).length;renderBackfill();
   fillMonConfig();renderMonitoring();renderNotifPanel();
   if(selectedAgentDash)renderCompliance();
@@ -2633,7 +2699,7 @@ async function confirmOff(){
   btn.disabled=true;
   const res=await api({action:m.mode==='assign'?'imposeOffense':'reassignOffense',admin:currentAdminUsername,agentName:f.agentName,flagId:f.id,level:m.level,violationType:f.type,flagReason:reasonOf(f),reason,notes,override:!!(ov&&ov.checked)});
   if(!res.success){toast('❌ '+res.message,'error');btn.disabled=false;return;}
-  toast('✅ '+res.message,'success');closeMonModal();await monRefresh();
+  toast('✅ '+res.message,'success');closeMonModal();delete agentAuditCache[f.agentName];await monRefresh();
 }
 async function monRefresh(){
   const ag=await api({action:'getAgents'});if(ag.success){cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);}
@@ -2667,6 +2733,9 @@ function viewFlag(id,onlyRecord){
 function renderCompliance(name){
   name=name||selectedAgentDash;const body=document.getElementById('compBody');
   const a=cacheAgents.find(x=>x.name===name);if(!body||!a)return;
+  if(!agentAuditCache[name]){ // first open for this agent: render now (without history), fetch, then redraw
+    ensureAgentAudit(name).then(()=>{if(selectedAgentDash===name)renderCompliance(name);});
+  }
   const s=agState(a),offs=mon.offenses.filter(o=>o.agentName===name).sort(byDesc('at')),rests=mon.restr.filter(r=>r.agentName===name).sort(byDesc('at'));
   const clars=mon.clars.filter(c=>c.agentName===name).sort(byDesc('requestedAt')),clar=clars[0];
   const cst=clarState(clar),eligible=s.trig.level>0&&!s.restricted,usedIds=usedOffIds(name);
@@ -2706,7 +2775,7 @@ function renderCompliance(name){
   // COMPLIANCE TIMELINE — chronological (oldest first) by the real event / action timestamp.
   const ev=[];
   s.fl.forEach(f=>ev.push({t:fdate(f),ic:'⚠',title:f.source==='HISTORICAL'?`Historical flag: ${FH_LABEL[f.type]||f.type}`:`${FH_LABEL[f.type]||f.type} flag detected`,sub:`${incident(f)} · Flag #${flagRef(f)} · ${f.detail?f.detail+' · ':''}${f.source==='HISTORICAL'?'imported from the original record on ':'system detected on '}${fmt(f.createdAt)}`}));
-  mon.audit.filter(e=>e.agentName===name&&e.violationType!=='settings').forEach(e=>{
+  (agentAuditCache[name]?.data||[]).filter(e=>e.violationType!=='settings').forEach(e=>{
     const d=e.decision||'',f=flagOf(e.flagId),ref=e.flagRef||(f?flagRef(f):''),inc=e.incidentLabel||(f?incident(f):''),incAt=e.incidentAt||(f?fdate(f):'');
     const incTxt=inc?`${inc}${ref?' · Flag #'+ref:''}${incAt?' · incident '+fmt(incAt):''}`:'';
     let ic='🟢',title=d;
@@ -2734,6 +2803,7 @@ async function monCall(payload){
   toast('✅ '+res.message,'success');
   const ag=await api({action:'getAgents'});if(ag.success){cacheAgents=ag.agents;state.agents.data=ag.agents;filterAgents(false);}
   ['monReason','monNotes'].forEach(id=>{document.getElementById(id).value='';});
+  delete agentAuditCache[name];
   await loadMonitoring();return true;
 }
 const monAct=action=>monCall({action});
@@ -2761,7 +2831,7 @@ async function confirmClear(name){
   if(btn)btn.disabled=true;
   const res=await api({action:'clearAgent',manager:currentAdminUsername,agentName:name,notes:notes.trim()});
   if(!res.success){toast('❌ '+res.message,'error');if(btn)btn.disabled=false;return;}
-  toast('✅ '+res.message,'success');closeMonModal();await monRefresh();
+  toast('✅ '+res.message,'success');closeMonModal();delete agentAuditCache[name];await monRefresh();
 }
 
 function renderBackfill(res){

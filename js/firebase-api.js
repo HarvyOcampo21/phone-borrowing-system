@@ -19,6 +19,14 @@
 //                           role "manager" = read-only + Cleared button for the teams they manage
 //                           (managerName must match the manager set in Manage Teams).
 //
+// READ-COST NOTE: every getX() below is served through a small in-memory
+// read cache (see snapDocs) — identical reads inside READ_TTL_MS share one
+// Firestore query, getPhones + getUnreturned share ONE phones read, and ANY
+// write action clears the cache so a user always sees their own change.
+// Pass { force: true } in the payload to bypass it (manual Refresh).
+// Whole-collection reads of the unbounded auditLog were removed from
+// getMonitoring: the audit trail is now fetched per agent (getAgentAudit).
+//
 // SECURITY NOTE: this talks to Firestore directly from the browser
 // using wide-open rules (see firestore.rules). PINs and admin
 // passwords are stored and compared in plain text, same trust
@@ -51,6 +59,45 @@ function toIso(ts) {
   return ts ? ts.toDate().toISOString() : "";
 }
 
+// ── READ CACHE (cuts Firestore reads; does not change results) ──────────
+// Firestore bills one read per document returned by every getDocs()/getDoc().
+// Several UI paths ask for the same collection within seconds of each other
+// (a poll tick + an open page + the manager scope helper + getUnreturned
+// re-reading phones). Sharing one in-flight/recent snapshot removes those
+// duplicates. Any non-read action bumps _gen and clears everything, so a
+// user's own writes are never hidden behind a stale cache entry.
+const READ_TTL_MS = 10000;
+const _snapCache = new Map(); // key -> { t, gen, p }
+let _gen = 0;
+function clearReadCache() { _gen++; _snapCache.clear(); }
+function snapDocs(key, opts, makeQuery) {
+  const now = Date.now();
+  const hit = _snapCache.get(key);
+  if (!(opts && opts.force) && hit && now - hit.t < READ_TTL_MS) return hit.p;
+  const gen = _gen;
+  const q = makeQuery ? makeQuery() : collection(db, key);
+  const p = getDocs(q).then((s) => s.docs);
+  const entry = { t: now, gen, p };
+  _snapCache.set(key, entry);
+  p.then(
+    () => { if (gen !== _gen && _snapCache.get(key) === entry) _snapCache.delete(key); },
+    () => { if (_snapCache.get(key) === entry) _snapCache.delete(key); } // never cache failures
+  );
+  return p;
+}
+
+// Permission-denied tracking: every request that Firestore rejects with
+// "Missing or insufficient permissions" is counted per API action, so the
+// rules-deny metric in the Firebase console can be tied to a code path.
+// Inspect in DevTools: window.__fsDenied  → { getDismissedNotifs: 37, ... }
+const _denied = {};
+function noteDenied(action, msg) {
+  _denied[action] = (_denied[action] || 0) + 1;
+  if (_denied[action] === 1)
+    console.warn("[firestore] blocked by security rules → action:", action, "—", msg);
+  window.__fsDenied = _denied;
+}
+
 function recordToHeaderObj(v) {
   return {
     "Record ID": v.recordId,
@@ -70,8 +117,8 @@ function recordToHeaderObj(v) {
 }
 
 // ── AGENTS ──────────────────────────────────────────────────
-async function getAgents() {
-  const snap = await getDocs(collection(db, "agents"));
+async function getAgents(opts) {
+  const snap = await snapDocs("agents", opts);
   const agents = [];
   snap.forEach((d) => {
     const v = d.data();
@@ -123,8 +170,8 @@ async function assignTeam(data) {
 }
 
 // ── TEAMS ────────────────────────────────────────────────────
-async function getTeams() {
-  const snap = await getDocs(collection(db, "teams"));
+async function getTeams(opts) {
+  const snap = await snapDocs("teams", opts);
   const teams = [];
   snap.forEach((d) => {
     const v = d.data();
@@ -153,8 +200,8 @@ async function removeTeam(data) {
 }
 
 // ── PHONES ───────────────────────────────────────────────────
-async function getPhones() {
-  const snap = await getDocs(collection(db, "phones"));
+async function getPhones(opts) {
+  const snap = await snapDocs("phones", opts);
   const phones = [];
   snap.forEach((d) => {
     const v = d.data();
@@ -469,8 +516,7 @@ async function setPhoneAvailable(data) {
 
 // ── RECORDS ──────────────────────────────────────────────────
 async function getRecords(data) {
-  const q = query(collection(db, "records"), orderBy("borrowTime", "asc"));
-  const snap = await getDocs(q);
+  const snap = await snapDocs("records", data, () => query(collection(db, "records"), orderBy("borrowTime", "asc")));
   let records = [];
   snap.forEach((d) => records.push(recordToHeaderObj(d.data())));
 
@@ -496,8 +542,8 @@ async function getRecords(data) {
 // agent has clicked Return on but that are awaiting admin verification
 // (pendingReturn). Overdue uses the same OVERDUE_HOURS session limit
 // the Agent Portal shows.
-async function getUnreturnedUnits() {
-  const snap = await getDocs(collection(db, "phones"));
+async function getUnreturnedUnits(opts) {
+  const snap = await snapDocs("phones", opts); // shares the getPhones snapshot
   const unreturned = [];
   snap.forEach((d) => {
     const v = d.data();
@@ -547,8 +593,8 @@ function notifDocId(key) {
   return key.toString().replace(/\//g, "_").slice(0, 400);
 }
 
-async function getDismissedNotifs() {
-  const snap = await getDocs(collection(db, "notifDismissals"));
+async function getDismissedNotifs(opts) {
+  const snap = await snapDocs("notifDismissals", opts);
   const keys = [];
   snap.forEach((d) => keys.push(d.data().key || d.id));
   return { success: true, keys };
@@ -752,7 +798,7 @@ const REASON_OF_TYPE = { overdue: "OVERDUE_RETURN", mismatch: "CALL_LOG_VERIFICA
 const reasonOf = (f) => f.flagReason || REASON_OF_TYPE[f.type] || null;
 
 const guard = (fn) => async (d) => {
-  try { return await fn(d || {}); } catch (e) { return { success: false, message: e.message }; }
+  try { return await fn(d || {}); } catch (e) { return { success: false, message: e.message, code: e.code }; }
 };
 const need = (v, msg) => { if (v == null || !v.toString().trim()) throw new Error(msg); return v.toString().trim(); };
 function tsToIso(o) { for (const k in o) if (o[k] && o[k].toDate) o[k] = o[k].toDate().toISOString(); return o; }
@@ -771,15 +817,32 @@ async function writeAudit(e) {
   await setDoc(doc(db, "auditLog", id), { ...base, ...Object.fromEntries(Object.entries(e).filter(([, v]) => v !== undefined)) });
 }
 
-const getMonitoring = guard(async () => {
+// getMonitoring returns the small, per-incident collections (flags, clarifications, offenses,
+// restrictions) plus the config — these are what the Monitoring list, sidebar badge and bell need.
+// The auditLog is NOT read here any more: it grows with every admin action and is only shown per
+// agent. `audit` therefore carries just the (rare) "Historical backfill" entries the Monitoring
+// settings panel shows; an agent's own audit trail comes from getAgentAudit.
+const getMonitoring = guard(async (d) => {
   const cref = doc(db, "monitorConfig", "settings");
   let cs = await getDoc(cref);
   if (!cs.exists()) { // first run: start tracking today so old history doesn't flood the queue
     await setDoc(cref, { ...MON_DEFAULTS, trackingStart: new Date().toISOString().slice(0, 10) });
     cs = await getDoc(cref);
   }
-  const [flags, audit, clarifications, offenses, restrictions] = await Promise.all([listAll("flags"), listAll("auditLog"), listAll("clarifications"), listAll("offenses"), listAll("restrictions")]);
+  const lst = async (c) => (await snapDocs(c, d)).map((x) => tsToIso(x.data()));
+  const [flags, clarifications, offenses, restrictions, audit] = await Promise.all([
+    lst("flags"), lst("clarifications"), lst("offenses"), lst("restrictions"),
+    snapDocs("auditLog:backfill", d, () => query(collection(db, "auditLog"), where("decision", "==", "Historical backfill")))
+      .then((r) => r.map((x) => tsToIso(x.data()))),
+  ]);
   return { success: true, config: { ...MON_DEFAULTS, ...cs.data() }, flags, audit, clarifications, offenses, restrictions };
+});
+
+// One agent's audit trail (equality filter on a single field → no composite index needed).
+const getAgentAudit = guard(async (d) => {
+  const name = need(d.agentName, "Missing agent.");
+  const docs = await snapDocs("auditLog:agent:" + name, d, () => query(collection(db, "auditLog"), where("agentName", "==", name)));
+  return { success: true, audit: docs.map((x) => tsToIso(x.data())) };
 });
 
 const saveMonitorConfig = guard(async (d) => {
@@ -1096,17 +1159,41 @@ const addAdminNote = guard(async (d) => {
 });
 
 // ── DISPATCHER (same shape as the old Apps Script doPost) ──
+// Actions that only read. Everything else is a write: it clears the read cache
+// afterwards (success or failure) so the next read is always fresh.
+const READ_ACTIONS = new Set([
+  "getAgents", "getTeams", "getPhones", "getRecords", "getUnreturned", "getDismissedNotifs",
+  "getMonitoring", "getAgentAudit", "getAgent", "getRecord", "adminLogin", "agentLogin", "checkPin", "verifyPin",
+]);
+const DENIED_RE = /insufficient permissions|permission-denied/i;
+
 export async function api(payload) {
+  const action = payload && payload.action;
+  const isWrite = !READ_ACTIONS.has(action);
+  let res;
   try {
+    res = await dispatch(payload);
+  } catch (err) {
+    if (err && (err.code === "permission-denied" || DENIED_RE.test(err.message || ""))) noteDenied(action, err.message);
+    res = { success: false, message: "Firestore error: " + err.message };
+  } finally {
+    if (isWrite) clearReadCache();
+  }
+  if (res && res.success === false && (res.code === "permission-denied" || DENIED_RE.test(res.message || ""))) noteDenied(action, res.message);
+  return res;
+}
+
+async function dispatch(payload) {
+  {
     switch (payload.action) {
-      case "getAgents":     return await getAgents();
+      case "getAgents":     return await getAgents(payload);
       case "addAgent":      return await addAgent(payload);
       case "removeAgent":   return await removeAgent(payload);
       case "assignTeam":    return await assignTeam(payload);
-      case "getTeams":      return await getTeams();
+      case "getTeams":      return await getTeams(payload);
       case "addTeam":       return await addTeam(payload);
       case "removeTeam":    return await removeTeam(payload);
-      case "getPhones":     return await getPhones();
+      case "getPhones":     return await getPhones(payload);
       case "addPhone":      return await addPhone(payload);
       case "removePhone":   return await removePhone(payload);
       case "borrowPhone":   return await borrowPhone(payload);
@@ -1116,7 +1203,7 @@ export async function api(payload) {
       case "setPhoneHold":      return await setPhoneHold(payload);
       case "setPhoneAvailable": return await setPhoneAvailable(payload);
       case "getRecords":    return await getRecords(payload);
-      case "getUnreturned": return await getUnreturnedUnits();
+      case "getUnreturned": return await getUnreturnedUnits(payload);
       case "verifyRecord":  return await verifyRecord(payload);
       case "adminLogin":    return await adminLogin(payload);
       case "agentLogin":    return await agentLogin(payload);
@@ -1127,11 +1214,12 @@ export async function api(payload) {
       case "verifyPin":     return await verifyPin(payload);
       case "resetPin":      return await resetPin(payload);
       case "requestPinReset": return await requestPinReset(payload);
-      case "getDismissedNotifs": return await getDismissedNotifs();
+      case "getDismissedNotifs": return await getDismissedNotifs(payload);
       case "dismissNotif":      return await dismissNotif(payload);
       case "dismissAllNotifs":  return await dismissAllNotifs(payload);
       case "clearDismissal":    return await clearDismissal(payload);
       case "getMonitoring": return await getMonitoring(payload);
+      case "getAgentAudit": return await getAgentAudit(payload);
       case "saveMonitorConfig": return await saveMonitorConfig(payload);
       case "syncFlags": return await syncFlags(payload);
       case "stampFlagReasons": return await stampFlagReasons(payload);
@@ -1145,10 +1233,11 @@ export async function api(payload) {
       case "addAdminNote": return await addAdminNote(payload);
       default: return { success: false, message: "Unknown action." };
     }
-  } catch (err) {
-    return { success: false, message: "Firestore error: " + err.message };
   }
 }
+
+// Manual "Refresh" hooks: drop every cached read.
+window.clearApiCache = clearReadCache;
 
 // index.html / admin.html call the global `api(...)` function directly
 // (they're classic, non-module scripts) — expose it on window.

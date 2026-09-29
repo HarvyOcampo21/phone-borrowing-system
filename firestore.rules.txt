@@ -1,0 +1,138 @@
+// ============================================================
+// RECOMMENDED firestore.rules — Phone Borrowing System
+// ============================================================
+// UPDATE: this is now based on your ACTUAL rules file, which you shared.
+// FOUND THE ~821 DENIES: your rules have no `match` block at all for
+// `notifDismissals`. Firestore denies any path that no rule matches, so
+// EVERY call to getDismissedNotifs (runs on every single admin poll
+// tick), dismissNotif, dismissAllNotifs and clearDismissal has been
+// silently denied this whole time. That single missing collection is
+// almost certainly your entire deny count — it's added back in below.
+//
+// Also flagging, separately from the deny count: your current `admins`
+// rule is `allow read: if true; allow write: if true;` — i.e. fully open
+// to writes too. Since the app itself never writes to `admins` (accounts
+// are created by hand in the console — see firebase-api.js, no
+// addAdmin/updateAdmin action exists), anyone with your firebaseConfig
+// (shipped to every browser, not a secret) can currently overwrite any
+// admin's password or role, or delete every admin account, directly via
+// the SDK. Recommend locking that to get-only below.
+// ============================================================
+// CONTEXT: this app has no Firebase Auth. admin.html / index.html check
+// usernames, passwords and PINs themselves, in plain text, then talk to
+// Firestore directly with the public firebaseConfig. Firestore rules can't
+// see any of that app-level login state (there's no request.auth), so
+// these rules CANNOT enforce "only admins can do X" — anyone who opens
+// devtools, copies firebaseConfig (it's not a secret, it's shipped to every
+// browser), and calls the Firestore SDK directly can act as if they were
+// an admin, regardless of what the rules below say. That's the real
+// finding here: with allow read, write: if true, the app's admin/agent
+// distinction is a UI convention, not a security boundary.
+//
+// What THIS ruleset does — and doesn't — fix:
+//  ✓ Stops the two things that were needlessly wide open even for a
+//    client-trust app: dumping every admin username+password with one
+//    query, and writing directly to collections the app never writes to.
+//  ✓ Gives you a place to see exactly which reads/writes are unexpectedly
+//    blocked (test this in the Rules Playground before deploying).
+//  ✗ Does NOT stop a motivated person with the deployed site's URL from
+//    reading/writing borrow records, agent PINs, offenses, etc. directly.
+//    That requires real auth (see "To actually fix this" below).
+//
+// Apply this in Firebase Console → Firestore Database → Rules, or via
+// `firebase deploy --only firestore:rules` if you keep it in your repo as
+// firestore.rules. Test in the Rules Playground first.
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Default deny: anything not explicitly listed below is blocked, so a
+    // stray/experimental collection someone points the SDK at doesn't
+    // silently accept reads or writes. This is what was quietly doing its
+    // job (correctly!) for notifDismissals until it was added below — kept
+    // here as a safety net for any future collection you add and forget to
+    // list.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ── admins ───────────────────────────────────────────────
+    // Holds plaintext username/password/role. The app only ever does a
+    // getDoc() by a known, slugified username (adminLogin, assertEnforcer,
+    // clearAgent) — it never lists this collection and never writes to it
+    // (admin accounts are created by hand in the console). Your current
+    // rule allows write:true here too, meaning anyone with the app's
+    // public firebaseConfig can currently overwrite/delete admin accounts
+    // directly. Recommended:
+    //   - allow single-document get (needed for login to work at all)
+    //   - block list (a `collection('admins').get()` from the console
+    //     would otherwise return every username+password in one shot)
+    //   - block all client writes (nothing in the app needs this)
+    match /admins/{adminId} {
+      allow get: if true;
+      allow list, create, update, delete: if false;
+    }
+
+    // ── everything else the app reads/writes ──────────────────
+    // Left open (read/write: true) because there's no Firebase Auth to
+    // gate on — tightening these further would just move the "wide open"
+    // problem around, not close it. Each is listed explicitly (not a
+    // wildcard) so the default-deny above catches anything unexpected.
+    // notifDismissals was MISSING from your rules — this is the fix for
+    // your ~821 denies.
+    match /agents/{agentId}         { allow read, write: if true; }
+    match /teams/{teamId}           { allow read, write: if true; }
+    match /phones/{phoneId}         { allow read, write: if true; }
+    match /records/{recordId}       { allow read, write: if true; }
+    match /notifDismissals/{id}     { allow read, write: if true; } // ← was missing — this is your deny fix
+    match /monitorConfig/{configId} { allow read, write: if true; }
+    match /flags/{flagId}           { allow read, write: if true; }
+    match /auditLog/{auditId}       { allow read, write: if true; }
+    match /clarifications/{clarId}  { allow read, write: if true; }
+    match /offenses/{offenseId}     { allow read, write: if true; }
+    match /restrictions/{restrictionId} { allow read, write: if true; }
+    match /counters/{counterId}     { allow read, write: if true; }
+  }
+}
+
+// ============================================================
+// CONFIRMED: WHERE THE ~821 DENIES CAME FROM
+// ============================================================
+// Your live rules file had every collection listed EXCEPT
+// `notifDismissals`. Firestore denies any request to a path that no
+// `match` block covers — there's no implicit "allow" fallback. So:
+//   • getDismissedNotifs() — called on every loadAll() and every
+//     refreshAll() tick (was every 30s, now every 90s) — was denied
+//     every single time.
+//   • dismissNotif / dismissAllNotifs / clearDismissal — denied on every
+//     use of the notification bell's Dismiss / Dismiss all actions.
+// None of this ever surfaced in the UI because loadAll()/refreshAll() in
+// admin.html wrap everything in try{...}catch{} with no logging — the
+// denied result just meant dismissedNotifs silently stayed an empty Set
+// forever, so a dismissed notification would keep reappearing for every
+// admin. Adding the `notifDismissals` match block above should drop your
+// deny count to ~0 (some noise from adminLogin typos, etc. is normal).
+//
+// To verify after deploying: the patched firebase-api.js now catches any
+// future permission-denied response itself and logs it, independent of
+// your rules file:
+//   1. Open the admin portal (or agent portal) and leave it running.
+//   2. DevTools console will show, if anything is still denied:
+//        [firestore] blocked by security rules → action: getXyz — Missing
+//        or insufficient permissions.
+//   3. `window.__fsDenied` holds a running count per action, e.g.
+//        { getDismissedNotifs: 0 }  ← should stay at 0 now
+//
+// ============================================================
+// TO ACTUALLY FIX THE TRUST BOUNDARY (bigger change, not required now)
+// ============================================================
+// Add Firebase Authentication (Anonymous auth is enough to get a stable
+// request.auth.uid; Email/Password if you want real accounts) and move
+// login + PIN/password comparison into a Cloud Function (needs the Blaze
+// plan) or at minimum gate rules on request.auth != null. That's the
+// only way to make "only admins can restrict an agent" a rule the
+// database enforces, rather than a check the browser politely agrees to
+// run. The MIGRATION_GUIDE.md referenced in firebase-api.js's header
+// comment sounds like exactly this plan — worth revisiting once the
+// quota issue is under control.
