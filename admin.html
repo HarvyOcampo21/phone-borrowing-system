@@ -335,6 +335,10 @@
     @keyframes fadeDown{from{opacity:0;transform:translateY(-12px)}to{opacity:1;transform:translateY(0)}}
       /* role: manager — hides everything marked admin-only */
     body.role-manager .admin-only{display:none!important}
+      /* role: director — full read visibility across every team, but no write controls
+         and no operational notifications (nothing there is actionable for a director) */
+    body.role-director .dir-hide{display:none!important}
+    body.role-director .notif-bell-wrap{display:none!important}
     .mgr-row{display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:10px 0;border-bottom:1px solid var(--border)}
     .mgr-row:last-child{border-bottom:none}
     .mgr-row .mgr-sub{font-size:.72rem;color:var(--muted);margin-top:2px;line-height:1.5}
@@ -399,6 +403,7 @@
         </div>
         <div class="nav-item" onclick="showPage('teams',this)">Manage Teams</div>
         <div class="nav-item" onclick="showPage('phones',this)">Manage Phones</div>
+        <div class="nav-item dir-hide" onclick="showPage('admins',this)">Manage Admins</div>
       </div>
       <div class="nav-section admin-only">
         <div class="nav-label">Monitoring</div>
@@ -511,7 +516,7 @@
           <div class="card" id="compCard" style="border-color:var(--primary)">
             <div class="card-title">Agent compliance</div>
             <div id="compBody"></div>
-            <div class="mon-actions admin-only" id="monActions">
+            <div class="mon-actions admin-only dir-hide" id="monActions">
               <div class="card-title" style="margin-bottom:8px">Enforcement actions — manual only</div>
               <div class="field"><label>Reason (required to restrict or remove a restriction)</label><input type="text" id="monReason" autocomplete="off"/></div>
               <div class="field" style="margin-bottom:0"><label>Admin notes</label><textarea id="monNotes" style="min-height:56px"></textarea></div>
@@ -536,7 +541,7 @@
             <div class="stat-card red"><div class="stat-label">Flagged Records</div><div class="stat-value" id="s-flagged">—</div><div class="stat-sub">call count mismatch</div></div>
             <div class="stat-card yellow admin-only"><div class="stat-label">Currently Borrowed</div><div class="stat-value" id="s-active">—</div><div class="stat-sub" id="s-active-sub">units out</div></div>
             <div class="stat-card green admin-only"><div class="stat-label">Available Units</div><div class="stat-value" id="s-avail">—</div><div class="stat-sub" id="s-avail-sub">ready</div></div>
-            <div class="stat-card red admin-only" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
+            <div class="stat-card red admin-only dir-hide" id="s-pinreq-card" style="cursor:pointer" onclick="jumpToAgentsFromDashboard()" title="Go to Manage Agents"><div class="stat-label">PIN Reset Requests</div><div class="stat-value" id="s-pinreq">—</div><div class="stat-sub">tap to review</div></div>
           </div>
 
           <div class="chart-grid">
@@ -596,7 +601,7 @@
       <!-- ══════════ AGENTS ══════════ -->
       <div class="page" id="page-agents">
         <div class="page-header"><div class="page-header-left"><h2>Manage Agents</h2><p>Add, search, assign teams, or remove agents.</p></div></div>
-        <div class="card">
+        <div class="card dir-hide">
           <div class="card-title">➕ Add Agent
             <button class="bulk-toggle" onclick="toggleBulk()" type="button">＋ Bulk Import</button>
           </div>
@@ -647,6 +652,9 @@
             <div class="search-wrap"><span class="search-icon">🔍</span>
               <input type="text" id="agentSearch" placeholder="Search agents…" oninput="filterAgents()"/>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap">
+              <input type="checkbox" id="showInactiveAgents" onchange="filterAgents()"/> Show deactivated
+            </label>
             <span class="list-count" id="agentCount"></span>
           </div>
           <div class="table-wrap">
@@ -662,7 +670,7 @@
       <!-- ══════════ TEAMS ══════════ -->
       <div class="page" id="page-teams">
         <div class="page-header"><div class="page-header-left"><h2>Manage Teams</h2><p>Create teams and assign managers.</p></div></div>
-        <div class="card">
+        <div class="card dir-hide">
           <div class="card-title">➕ Add New Team</div>
           <div class="inline-row">
             <div class="field"><label>Team Name</label><input type="text" id="newTeamName" placeholder="e.g. Team Alpha" onkeydown="if(event.key==='Enter')addTeam()" autocorrect="off"/></div>
@@ -681,10 +689,44 @@
         </div>
       </div>
 
+      <!-- ══════════ ADMIN ACCOUNTS ══════════ -->
+      <div class="page" id="page-admins">
+        <div class="page-header"><div class="page-header-left"><h2>Manage Admins</h2><p>Add or deactivate Admin, Manager and Director accounts.</p></div></div>
+        <div class="card">
+          <div class="card-title">➕ Add Account</div>
+          <div class="inline-row">
+            <div class="field"><label>Username</label><input type="text" id="newAdminUsername" placeholder="e.g. jsmith" autocorrect="off"/></div>
+            <div class="field"><label>Password</label><input type="text" id="newAdminPassword" placeholder="Temporary password" autocorrect="off"/></div>
+            <div class="field"><label>Role</label>
+              <select id="newAdminRole" onchange="document.getElementById('newAdminMgrField').style.display=this.value==='manager'?'':'none'">
+                <option value="admin">Admin — full access</option>
+                <option value="manager">Manager — own team only, limited actions</option>
+                <option value="director">Director — view-only, all teams</option>
+              </select>
+            </div>
+            <div class="field" id="newAdminMgrField" style="display:none"><label>Manager Name</label><input type="text" id="newAdminManagerName" placeholder="Matches the Manager field on a team" autocorrect="off"/></div>
+            <button class="btn btn-primary" onclick="addAdminAccount()" type="button">Create Account</button>
+          </div>
+          <p style="font-size:.74rem;color:var(--muted);margin-top:10px">
+            Manager Name should match a team's Manager field exactly, so that account is scoped to that team.
+            There's no email/password recovery here — passwords are set by whoever creates the account.
+          </p>
+        </div>
+        <div class="card">
+          <div class="card-title">🔑 Current Accounts</div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>Username</th><th>Role</th><th>Manager Name</th><th>Status</th><th>Action</th></tr></thead>
+              <tbody id="adminsTableBody"><tr class="empty-row"><td colspan="5">Loading…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- ══════════ PHONES ══════════ -->
       <div class="page" id="page-phones">
         <div class="page-header"><div class="page-header-left"><h2>Manage Phone Units</h2><p>Add, search, or remove phone units.</p></div></div>
-        <div class="card">
+        <div class="card dir-hide">
           <div class="card-title">➕ Add New Phone Unit</div>
           <div class="inline-row">
             <div class="field"><label>Unit Number</label><input type="text" id="newUnitNo" placeholder="e.g. 1" inputmode="numeric"/></div>
@@ -698,6 +740,9 @@
             <div class="search-wrap"><span class="search-icon">🔍</span>
               <input type="text" id="phoneSearch" placeholder="Search unit no. or serial…" oninput="filterPhones()"/>
             </div>
+            <label style="display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--muted);white-space:nowrap">
+              <input type="checkbox" id="showInactivePhones" onchange="filterPhones()"/> Show deactivated
+            </label>
             <span class="list-count" id="phoneCount"></span>
           </div>
           <div class="table-wrap">
@@ -776,7 +821,7 @@
       <div class="page" id="page-monitoring">
         <div class="page-header"><div class="page-header-left"><h2>Agent Monitoring</h2>
           <p>The system flags possible violations; you decide what becomes an offense or a restriction.</p></div></div>
-        <div class="card mon-settings">
+        <div class="card mon-settings dir-hide">
           <details id="monSettings"><summary>Thresholds &amp; settings</summary>
             <div class="inline-row">
               <div class="field"><label>Minimum calls per period</label><input type="number" id="cfgMinCalls" min="0"/></div>
@@ -792,7 +837,7 @@
             </div>
           </details>
         </div>
-        <div class="card">
+        <div class="card dir-hide">
           <div class="inline-row" style="align-items:center"><div class="field"><div class="card-title" style="margin-bottom:6px">Historical flag backfill</div>
             <div style="font-size:.76rem;color:var(--muted)">Turns violations already in the borrowing records into flags for review, dated from the original record. Never imposes an offense or restriction, and running it again skips flags that exist.</div></div>
             <button class="btn btn-primary" id="btnBackfill" onclick="runBackfill()" type="button">Backfill Historical Flags</button></div>
@@ -1091,6 +1136,26 @@ function installManagerApi(managerName){
     return res;};
 }
 
+// ── DIRECTOR ROLE ────────────────────────────────────────
+// Sees everything an admin sees — every team, every agent, every dashboard,
+// full phone-unit tracking — but is view-only: no clearing agents, no
+// offense/restriction actions, no dismissing notifications, no add/remove/
+// edit of any kind. Unlike managers, directors are NOT scoped to a team, so
+// this wrapper only enforces the read-only whitelist; it does no filtering.
+const isDirector=()=>currentRole==='director';
+// Used wherever the UI decides whether to render write controls at all
+// (buttons, forms) — true for both roles that can't perform writes.
+const isReadOnly=()=>isMgr()||isDirector();
+const DIRECTOR_ALLOWED=new Set(['getAgents','getTeams','getPhones','getRecords','getUnreturned','getDismissedNotifs','getMonitoring','getAgentAudit']);
+function installDirectorApi(){
+  if(window.__rawApi)return;
+  const raw=window.api;window.__rawApi=raw;
+  window.api=async p=>{
+    const act=p&&p.action;
+    if(!DIRECTOR_ALLOWED.has(act))return {success:false,message:"Directors have view-only access."};
+    return await raw(p);};
+}
+
 // ── SESSION ──────────────────────────────────────────────────
 const saveS=d=>localStorage.setItem(SESSION_KEY,JSON.stringify(d));
 const loadS=()=>{try{return JSON.parse(localStorage.getItem(SESSION_KEY));}catch{return null;}};
@@ -1153,11 +1218,13 @@ async function doLogin(){
 }
 
 function startApp(admin){
-  currentRole=admin.role==='manager'?'manager':'admin';
+  currentRole=admin.role==='manager'?'manager':admin.role==='director'?'director':'admin';
   currentManagerName=admin.managerName||'';
   document.body.classList.toggle('role-manager',isMgr());
+  document.body.classList.toggle('role-director',isDirector());
   if(isMgr())installManagerApi(currentManagerName);
-  const roleEl=document.getElementById('adminRole');if(roleEl)roleEl.textContent=isMgr()?'Manager':'Administrator';
+  if(isDirector())installDirectorApi();
+  const roleEl=document.getElementById('adminRole');if(roleEl)roleEl.textContent=isMgr()?'Manager':isDirector()?'Director':'Administrator';
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('appScreen').style.display='block';
   document.getElementById('adminName').textContent=admin.username;
@@ -1173,6 +1240,7 @@ function doLogout(){clrS();stopPolling();location.reload();} // reload drops cac
 // ── NAV ───────────────────────────────────────────────────
 function showPage(name,el){
   if(isMgr()&&name!=='dashboard')return;
+  if(isDirector()&&name==='admins')return; // account management is admin-only; nav item is hidden too, this is just a backstop
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
   document.getElementById('page-'+name).classList.add('active');
@@ -1183,6 +1251,7 @@ function showPage(name,el){
   if(name==='unreturned') loadUnreturned();
   if(name==='history')    populateHistoryUnits();
   if(name==='teams')      renderTeamsTable();
+  if(name==='admins')     loadAdmins();
   if(name==='monitoring'){renderMonitoring();loadMonitoring();} // opening the page: get current data now, not up to MON_INTERVAL_MS stale
 }
 
@@ -1449,7 +1518,7 @@ function filterAgentDashSearch(){
   if(!q){sugg.style.display='none';return;}
   const matches=cacheAgents.filter(a=>a.name.toLowerCase().includes(q)).slice(0,8);
   if(!matches.length){sugg.style.display='none';return;}
-  sugg.innerHTML=matches.map(a=>`<div style="padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(var(--primary-rgb),.08)'" onmouseout="this.style.background=''" onclick="selectAgentDash('${a.name.replace(/'/g,"\\'")}')">${a.name}${a.team?` <span style='font-size:.72rem;color:var(--muted)'>${a.team}</span>`:''}</div>`).join('');
+  sugg.innerHTML=matches.map(a=>`<div style="padding:10px 14px;cursor:pointer;font-size:.88rem;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)" onmouseover="this.style.background='rgba(var(--primary-rgb),.08)'" onmouseout="this.style.background=''" onclick="selectAgentDash('${a.name.replace(/'/g,"\\'")}')">${a.name}${a.team?` <span style='font-size:.72rem;color:var(--muted)'>${a.team}</span>`:''}${a.active===false?` <span style='font-size:.7rem;color:var(--muted)'>(deactivated)</span>`:''}</div>`).join('');
   sugg.style.display='block';
 }
 
@@ -1812,7 +1881,9 @@ async function bulkImport(){
 function filterAgents(resetPage=true){
   if(!resetPage&&tableBeingEdited('agentTableBody'))return;
   const q=(document.getElementById('agentSearch')?.value||'').toLowerCase();
-  state.agents.filtered=q?state.agents.data.filter(a=>a.name.toLowerCase().includes(q)||a.team.toLowerCase().includes(q)):[...state.agents.data];
+  const showInactive=document.getElementById('showInactiveAgents')?.checked;
+  let pool=showInactive?state.agents.data:state.agents.data.filter(a=>a.active!==false);
+  state.agents.filtered=q?pool.filter(a=>a.name.toLowerCase().includes(q)||a.team.toLowerCase().includes(q)):[...pool];
   if(resetPage)state.agents.page=1;
   else state.agents.page=Math.min(state.agents.page,Math.max(1,Math.ceil(state.agents.filtered.length/PAGE_SIZE)));
   renderAgentTable();
@@ -1838,14 +1909,17 @@ function renderAgentTable(){
     const teamOpts=teamOptsArr.join('');
     const pinRequestedAt=a.pinResetRequestedAt?new Date(a.pinResetRequestedAt).toLocaleString():'';
     const pinFlag=a.pinResetRequested?`<div class="pin-flag" title="${pinRequestedAt?'Requested '+pinRequestedAt:''}">🔔 PIN reset requested</div>`:'';
-    return `<tr id="agentrow-${sanitizeId(a.name)}">
+    const inactive=a.active===false;
+    return `<tr id="agentrow-${sanitizeId(a.name)}"${inactive?' style="opacity:.55"':''}>
       <td style="color:var(--muted);width:36px">${start+i+1}</td>
-      <td style="font-weight:500">👤 ${a.name}${a.restricted?' <span class="tag tag-restricted">RESTRICTED</span>':''}${pinFlag}</td>
-      <td><select onchange="assignTeam('${a.name.replace(/'/g,"\\'")}',this.value)" style="width:130px;padding:5px 8px;font-size:.8rem;border-radius:7px;border:1.5px solid var(--border);background:var(--input-bg)">${teamOpts}</select></td>
+      <td style="font-weight:500">👤 ${a.name}${inactive?' <span class="tag" style="background:var(--muted);color:#fff">DEACTIVATED</span>':''}${a.restricted?' <span class="tag tag-restricted">RESTRICTED</span>':''}${pinFlag}</td>
+      <td>${isReadOnly()||inactive?esc(a.team||'— No Team —'):`<select onchange="assignTeam('${a.name.replace(/'/g,"\\'")}',this.value)" style="width:130px;padding:5px 8px;font-size:.8rem;border-radius:7px;border:1.5px solid var(--border);background:var(--input-bg)">${teamOpts}</select>`}</td>
       <td style="display:flex;gap:5px;flex-wrap:wrap">
         <button class="btn btn-info" onclick="viewAgentPerformance('${a.name.replace(/'/g,"\\'")}')">📊 Dashboard</button>
-        <button class="btn btn-warn"${a.pinResetRequested?' style="box-shadow:0 0 0 2px var(--red)"':''} onclick="resetAgentPin('${a.name.replace(/'/g,"\\'")}')">Reset PIN</button>
-        <button class="btn btn-danger btn-sm" onclick="removeAgent('${a.name.replace(/'/g,"\\'")}')">Remove</button>
+        ${isReadOnly()?'':(inactive
+          ?`<button class="btn btn-verify btn-sm" onclick="toggleAgentActive('${a.name.replace(/'/g,"\\'")}',true)">Reactivate</button>`
+          :`<button class="btn btn-warn"${a.pinResetRequested?' style="box-shadow:0 0 0 2px var(--red)"':''} onclick="resetAgentPin('${a.name.replace(/'/g,"\\'")}')">Reset PIN</button>
+        <button class="btn btn-danger btn-sm" onclick="toggleAgentActive('${a.name.replace(/'/g,"\\'")}',false)">Deactivate</button>`)}
       </td>
     </tr>`;
   }).join('');
@@ -1855,16 +1929,21 @@ async function addAgent(){
   const input=document.getElementById('newAgentName');const name=input.value.trim();const team=document.getElementById('newAgentTeam').value;
   if(!name)return toast('Please enter an agent name.','error');
   if(state.agents.data.some(a=>a.name===name))return toast('Agent already exists.','error');
-  state.agents.data.push({name,team});cacheAgents=[...state.agents.data];filterAgents();input.value='';document.getElementById('newAgentTeam').value='';toast('Agent added!','success');
+  state.agents.data.push({name,team,active:true});cacheAgents=[...state.agents.data];filterAgents();input.value='';document.getElementById('newAgentTeam').value='';toast('Agent added!','success');
   const res=await api({action:'addAgent',name,team});
   if(!res.success){state.agents.data=state.agents.data.filter(a=>a.name!==name);cacheAgents=[...state.agents.data];filterAgents();toast('❌ '+res.message,'error');}
 }
-async function removeAgent(name){
-  if(!confirm(`Remove agent "${name}"?`))return;
+// Soft-delete: deactivating hides the agent from the agent portal (they
+// can't log in or borrow) but keeps every record, flag and offense intact
+// for reporting — nothing is ever actually removed here anymore.
+async function toggleAgentActive(name,makeActive){
+  if(!confirm(makeActive?`Reactivate "${name}"?`:`Deactivate "${name}"? They won't be able to log in or borrow phones until reactivated. Their history stays intact.`))return;
   const prev=[...state.agents.data];
-  state.agents.data=state.agents.data.filter(a=>a.name!==name);cacheAgents=[...state.agents.data];filterAgents();toast('Agent removed.','success');
-  const res=await api({action:'removeAgent',name});
+  const agent=state.agents.data.find(a=>a.name===name);if(agent)agent.active=makeActive;
+  cacheAgents=[...state.agents.data];filterAgents();
+  const res=await api({action:'setAgentActive',name,active:makeActive,by:currentAdminUsername});
   if(!res.success){state.agents.data=prev;cacheAgents=[...state.agents.data];filterAgents();toast('❌ '+res.message,'error');}
+  else toast(makeActive?'✅ Agent reactivated.':'✅ '+res.message,'success');
 }
 async function assignTeam(agentName,team){
   const agent=state.agents.data.find(a=>a.name===agentName);if(agent)agent.team=team;cacheAgents=[...state.agents.data];
@@ -1890,7 +1969,7 @@ function renderTeamsTable(){
     return `<tr>
       <td style="font-weight:600">${t.teamName}</td><td>${t.manager||'—'}</td>
       <td><span style="font-size:.8rem;color:var(--muted)">${count} agent${count!==1?'s':''}</span></td>
-      <td><button class="btn btn-danger btn-sm" onclick="removeTeam('${t.teamName.replace(/'/g,"\\'")}')">Remove</button></td>
+      <td>${isReadOnly()?'':`<button class="btn btn-danger btn-sm" onclick="removeTeam('${t.teamName.replace(/'/g,"\\'")}')">Remove</button>`}</td>
     </tr>`;
   }).join('');
 }
@@ -1911,11 +1990,61 @@ async function removeTeam(name){
   if(!res.success){cacheTeams=prev;renderTeamsTable();populateTeamDropdowns();toast('❌ '+res.message,'error');}
 }
 
+// ── ADMIN ACCOUNTS (Admin-only — see MGR_ALLOWED/DIRECTOR_ALLOWED) ──────
+let cacheAdmins=[];
+const ROLE_LABEL={admin:'Admin',manager:'Manager',director:'Director'};
+async function loadAdmins(){
+  const tbody=document.getElementById('adminsTableBody');
+  const res=await api({action:'getAdmins'});
+  if(!res.success){tbody.innerHTML=`<tr class="empty-row"><td colspan="5">❌ ${esc(res.message)}</td></tr>`;return;}
+  cacheAdmins=res.admins;renderAdminsTable();
+}
+function renderAdminsTable(){
+  const tbody=document.getElementById('adminsTableBody');
+  if(!cacheAdmins.length){tbody.innerHTML='<tr class="empty-row"><td colspan="5">No accounts yet.</td></tr>';return;}
+  tbody.innerHTML=cacheAdmins.map(a=>{
+    const isSelf=slugEq(a.username,currentAdminUsername);
+    return `<tr${a.active?'':' style="opacity:.55"'}>
+      <td style="font-weight:600">${esc(a.username)}${isSelf?' <span style="color:var(--muted);font-size:.74rem">(you)</span>':''}</td>
+      <td>${ROLE_LABEL[a.role]||a.role}</td>
+      <td>${a.role==='manager'?esc(a.managerName||'—'):'—'}</td>
+      <td>${a.active?'<span style="color:var(--green)">Active</span>':'<span style="color:var(--muted)">Deactivated</span>'}</td>
+      <td>${isSelf?'<span style="color:var(--muted);font-size:.74rem">—</span>':
+        `<button class="btn ${a.active?'btn-danger':'btn-verify'} btn-sm" onclick="toggleAdminActive('${a.username.replace(/'/g,"\\'")}',${!a.active})">${a.active?'Deactivate':'Reactivate'}</button>`}
+      </td>
+    </tr>`;
+  }).join('');
+}
+function slugEq(a,b){return (a||'').trim().toLowerCase()===(b||'').trim().toLowerCase();}
+async function addAdminAccount(){
+  const username=document.getElementById('newAdminUsername').value.trim();
+  const password=document.getElementById('newAdminPassword').value;
+  const role=document.getElementById('newAdminRole').value;
+  const managerName=document.getElementById('newAdminManagerName').value.trim();
+  if(!username||!password)return toast('Username and password are required.','error');
+  if(cacheAdmins.find(a=>slugEq(a.username,username)))return toast('That username already exists.','error');
+  const res=await api({action:'addAdmin',username,password,role,managerName,by:currentAdminUsername});
+  if(!res.success)return toast('❌ '+res.message,'error');
+  toast('✅ Account created.','success');
+  ['newAdminUsername','newAdminPassword','newAdminManagerName'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('newAdminRole').value='admin';document.getElementById('newAdminMgrField').style.display='none';
+  await loadAdmins();
+}
+async function toggleAdminActive(username,makeActive){
+  if(!confirm(makeActive?`Reactivate "${username}"?`:`Deactivate "${username}"? They won't be able to log in until reactivated.`))return;
+  const res=await api({action:'setAdminActive',username,active:makeActive,by:currentAdminUsername});
+  if(!res.success)return toast('❌ '+res.message,'error');
+  toast('✅ '+res.message,'success');
+  await loadAdmins();
+}
+
 // ── PHONES ────────────────────────────────────────────
 function filterPhones(resetPage=true){
   if(!resetPage&&tableBeingEdited('phoneTableBody'))return;
   const q=(document.getElementById('phoneSearch')?.value||'').toLowerCase();
-  state.phones.filtered=q?state.phones.data.filter(p=>p.unitNo.toLowerCase().includes(q)||p.serialNo.toLowerCase().includes(q)):[...state.phones.data];
+  const showInactive=document.getElementById('showInactivePhones')?.checked;
+  let pool=showInactive?state.phones.data:state.phones.data.filter(p=>p.active!==false);
+  state.phones.filtered=q?pool.filter(p=>p.unitNo.toLowerCase().includes(q)||p.serialNo.toLowerCase().includes(q)):[...pool];
   if(resetPage)state.phones.page=1;
   else state.phones.page=Math.min(state.phones.page,Math.max(1,Math.ceil(state.phones.filtered.length/PAGE_SIZE)));
   renderPhoneTable();
@@ -1951,14 +2080,21 @@ function renderPhoneTable(){
     const uid=p.unitNo.toString().replace(/[^a-zA-Z0-9]/g,'_');
     if(existing[uid]&&phoneRowProtected(uid)){frag.appendChild(existing[uid]);return;}
     const tag=phoneStatusTag(p);
+    const inactive=p.active===false;
     let action;
-    if(p.available){
+    if(isReadOnly()){
+      action=`<span style="color:var(--muted);font-size:.74rem">${p.available?'Available':p.pendingReturn?'See Pending Returns':p.unavailableReason?'On hold':'Currently borrowed'}</span>`;
+    }else if(p.pendingReturn){
+      // Pending return takes priority even if deactivated — finish the return
+      // process on the Pending Returns page first; it doesn't care about active.
+      action=`<span style="color:var(--muted);font-size:.74rem">See Pending Returns</span>`;
+    }else if(inactive){
+      action=`<button class="btn btn-verify btn-sm" onclick="togglePhoneActive('${p.unitNo}',true)">Reactivate</button>`;
+    }else if(p.available){
       action=`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
-        <button class="btn btn-danger btn-sm" onclick="removePhone('${p.unitNo}')">Remove</button>
+        <button class="btn btn-danger btn-sm" onclick="togglePhoneActive('${p.unitNo}',false)">Deactivate</button>
         <button class="btn btn-logout btn-sm" onclick="showAdminHold('${p.unitNo}','${uid}')" style="width:auto">Hold ▾</button>
       </div>`;
-    }else if(p.pendingReturn){
-      action=`<span style="color:var(--muted);font-size:.74rem">See Pending Returns</span>`;
     }else if(p.unavailableReason){
       action=`<button class="btn btn-verify btn-sm" onclick="releasePhone('${p.unitNo}')">🔓 Release</button>`;
     }else{
@@ -1966,9 +2102,10 @@ function renderPhoneTable(){
     }
     const tr=document.createElement('tr');
     tr.id='phrow-'+uid;
+    if(inactive)tr.style.opacity='.55';
     tr.innerHTML=`
       <td>Unit ${p.unitNo}</td><td>${p.serialNo}</td>
-      <td><span class="tag ${tag.cls}" id="phtag-${uid}">${tag.label}</span></td>
+      <td><span class="tag ${tag.cls}" id="phtag-${uid}">${tag.label}</span>${inactive?' <span class="tag" style="background:var(--muted);color:#fff">DEACTIVATED</span>':''}</td>
       <td id="phaction-${uid}">${action}</td>`;
     frag.appendChild(tr);
   });
@@ -2045,18 +2182,24 @@ async function addPhone(){
   const unitNo=document.getElementById('newUnitNo').value.trim();const serialNo=document.getElementById('newSerialNo').value.trim();
   if(!unitNo||!serialNo)return toast('Please enter both unit number and serial number.','error');
   if(state.phones.data.find(p=>p.unitNo===unitNo))return toast('Unit number already exists.','error');
-  state.phones.data.push({unitNo,serialNo,available:true,pendingReturn:false,unavailableReason:null});cachePhones=[...state.phones.data];filterPhones();
+  state.phones.data.push({unitNo,serialNo,available:true,pendingReturn:false,unavailableReason:null,active:true});cachePhones=[...state.phones.data];filterPhones();
   document.getElementById('newUnitNo').value='';document.getElementById('newSerialNo').value='';
   toast('Phone unit added!','success');lockWrites(20000);
   const res=await api({action:'addPhone',unitNo,serialNo});lockWrites(0);
   if(!res.success){state.phones.data=state.phones.data.filter(p=>p.unitNo!==unitNo);cachePhones=[...state.phones.data];filterPhones();toast('❌ '+res.message,'error');}
 }
-async function removePhone(unitNo){
-  if(!confirm(`Remove Unit ${unitNo}?`))return;
+// Soft-delete: deactivating removes the unit from the agent portal's borrow
+// grid (and borrowPhone refuses it server-side as a backstop) but every
+// past record for it stays in Unit History / All Records — nothing is
+// actually deleted here anymore.
+async function togglePhoneActive(unitNo,makeActive){
+  if(!confirm(makeActive?`Reactivate Unit ${unitNo}?`:`Deactivate Unit ${unitNo}? It won't be borrowable until reactivated. Its history stays intact.`))return;
   const prev=[...state.phones.data];
-  state.phones.data=state.phones.data.filter(p=>p.unitNo!==unitNo);cachePhones=[...state.phones.data];filterPhones();toast('Phone unit removed.','success');lockWrites(10000);
-  const res=await api({action:'removePhone',unitNo});lockWrites(0);
+  const ph=state.phones.data.find(p=>p.unitNo===unitNo);if(ph)ph.active=makeActive;
+  cachePhones=[...state.phones.data];filterPhones();lockWrites(10000);
+  const res=await api({action:'setPhoneActive',unitNo,active:makeActive,by:currentAdminUsername});lockWrites(0);
   if(!res.success){state.phones.data=prev;cachePhones=[...state.phones.data];filterPhones();toast('❌ '+res.message,'error');}
+  else toast(makeActive?'✅ Unit reactivated.':'✅ '+res.message,'success');
 }
 
 // ── PAGINATION ────────────────────────────────────────
@@ -2156,16 +2299,16 @@ async function loadPending(){
         <td>${p.borrowedBy||'—'}</td><td>Unit ${p.unitNo}</td>
         <td>${fmt(p.borrowTime)}</td><td>${r['Return Time']?fmt(r['Return Time']):'—'}</td>
         <td style="font-weight:700;color:var(--primary)">${agentCalls}</td>
-        <td><input type="number" class="verify-input" id="pc-${uid}" min="0" placeholder="0"/></td>
+        <td>${isReadOnly()?'—':'<input type="number" class="verify-input" id="pc-'+uid+'" min="0" placeholder="0"/>'}</td>
         <td style="font-weight:700;color:var(--primary)">${agentSucc}</td>
-        <td><input type="number" class="verify-input" id="ps-${uid}" min="0" placeholder="0"/></td>
+        <td>${isReadOnly()?'—':'<input type="number" class="verify-input" id="ps-'+uid+'" min="0" placeholder="0"/>'}</td>
         <td><span class="tag ${p.physicallyReturned?'tag-today':'tag-unverified'}" id="ptag-${uid}">${p.physicallyReturned?'📦 Physically Back':'Unverified'}</span></td>
         <td id="pdecision-${uid}">
-          <div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
+          ${isReadOnly()?'<span style="color:var(--muted);font-size:.74rem">Awaiting admin review</span>':`<div style="display:flex;flex-wrap:wrap;gap:6px;align-items:center">
             ${p.physicallyReturned?'':`<button class="btn btn-logout btn-sm" onclick="confirmPhysical('${p.unitNo}','${uid}')" type="button" style="width:auto">📦 Confirm Physical Return</button>`}
             <button class="btn btn-verify btn-sm" onclick="approvePending('${p.unitNo}','${uid}')" type="button">🔓 Release</button>
             <button class="btn btn-danger btn-sm" onclick="showHoldReason('${p.unitNo}','${uid}')" type="button">🚫 Hold</button>
-          </div>
+          </div>`}
         </td>`;
       frag.appendChild(tr);
     });
@@ -2429,6 +2572,7 @@ async function loadMonitoring(){
   const set=x=>{mon={config:x.config,flags:x.flags,audit:x.audit,clars:x.clarifications,offenses:x.offenses||[],restr:x.restrictions||[]};};
   set(r);
   if(isMgr()){renderNotifPanel();renderMgrClear();if(selectedAgentDash)renderCompliance();return;} // managers never run detection or write flags
+  if(!isDirector()){ // directors see the same full data below, but — like managers — never run detection or write flags
   // detectFlags() itself is pure client-side JS (no Firestore read) — but the
   // syncFlags() call it can trigger IS a write+read, so skip re-running the
   // detect/sync pass when the underlying borrowing records haven't changed
@@ -2445,7 +2589,8 @@ async function loadMonitoring(){
     if(!window.__stamped&&mon.flags.some(f=>!f.flagReason&&REASON_OF_TYPE[f.type])){window.__stamped=true;
       const st=await api({action:'stampFlagReasons'});if(st.success&&st.updated){const r3=await api({action:'getMonitoring'});if(r3.success)set(r3);}}
   }
-  mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).length;renderBackfill();
+  }
+  mon.uncovered=detectFlags(true).filter(f=>f.source==='HISTORICAL'||f.recordId).length;renderBackfill(); // detectFlags(true) is a pure in-memory dry-run, no Firestore call — safe for directors too
   fillMonConfig();renderMonitoring();renderNotifPanel();
   if(selectedAgentDash)renderCompliance();
 }
@@ -2587,7 +2732,7 @@ function flagCard(f,s,offs,rests,clar){
     ${row('Enforcement',off?`<b>${ORD[off.level]} Offense</b> assigned ${fmt(off.at)} by ${esc(off.admin)}`:f.status==='dismissed'?'No offense (dismissed)':'No offense assigned — use Flag history below')}
     ${off&&off.level>=3?row('Restriction',rest?`Restricted ${fmt(rest.at)} by ${esc(rest.by)}`:'Not restricted'):''}
     ${off&&off.level>=3&&clar?row('Manager clarification',esc(clarLabel(clar))):''}
-    <div class="mon-btns">${f.status==='pending'?btn('btn-verify','confirm','Confirm Flag')+btn('btn-danger btn-sm','dismiss','Dismiss Flag'):''}${linkBtns(f)}</div></div>`;
+    <div class="mon-btns">${isReadOnly()?'':(f.status==='pending'?btn('btn-verify','confirm','Confirm Flag')+btn('btn-danger btn-sm','dismiss','Dismiss Flag'):'')}${linkBtns(f)}</div></div>`;
 }
 
 // Shared by the summary line and Flag history: which existing borrowing records still have no compliance flag.
@@ -2604,14 +2749,15 @@ function reconcile(name,s){
   const R=reconData(name,s),missing=R.missing.length;
   return `<div class="mon-sec">Reconciliation with existing records (all time)</div><div style="font-size:.78rem;line-height:1.6">
     Borrowing records: Flagged <b>${R.nF}</b> · Overdue returns <b>${R.nO}</b> → Compliance flags: Call Log / Verification <b>${s.fl.filter(f=>reasonOf(f)==='CALL_LOG_VERIFICATION').length}</b> · Overdue Return <b>${s.fl.filter(f=>reasonOf(f)==='OVERDUE_RETURN').length}</b>${s.fl.some(f=>f.source==='HISTORICAL')?` (${s.fl.filter(f=>f.source==='HISTORICAL').length} historical)`:''}<br>
-    ${missing?`<span style="color:var(--red)">⚠ ${missing} of these record${missing>1?'s have':' has'} no compliance flag yet.</span> <button class="btn btn-warn" onclick="runBackfill(true)" type="button">Backfill Historical Flags</button>`:'✓ Every flagged or overdue record has a compliance flag.'}</div>`;
+    ${missing?`<span style="color:var(--red)">⚠ ${missing} of these record${missing>1?'s have':' has'} no compliance flag yet.</span>${isReadOnly()?'':` <button class="btn btn-warn" onclick="runBackfill(true)" type="button">Backfill Historical Flags</button>`}`:'✓ Every flagged or overdue record has a compliance flag.'}</div>`;
 }
 
 // FLAG HISTORY — every flag with its exact original date + time and its offense control.
 function offCtl(f){
   if(f.status==='dismissed')return '<span class="fh-mut">Dismissed — no offense</span>';
   const cur=curOff(f);
-  if(cur)return `<b>${ORD[cur.level]} Offense</b><div class="fh-mut">Assigned ${fmt(cur.at)} by ${esc(cur.admin)}</div><button class="btn btn-warn" data-f="${esc(f.id)}" onclick="openOffModal(this.dataset.f,'reassign')" type="button">Reassign Offense</button>`;
+  if(cur)return `<b>${ORD[cur.level]} Offense</b><div class="fh-mut">Assigned ${fmt(cur.at)} by ${esc(cur.admin)}</div>${isReadOnly()?'':`<button class="btn btn-warn" data-f="${esc(f.id)}" onclick="openOffModal(this.dataset.f,'reassign')" type="button">Reassign Offense</button>`}`;
+  if(isReadOnly())return '<span class="fh-mut">No offense assigned</span>';
   const taken=takenLevels(f.agentName,null,reasonOf(f));
   return `<div class="fh-mut">Assign Offense</div><select class="fh-sel" data-f="${esc(f.id)}" onchange="pickOffense(this)"><option value="0">No Offense</option>${levelRange(taken).map(k=>`<option value="${k}"${taken.includes(k)?' disabled':''}>${ORD[k]} Offense${taken.includes(k)?' (already assigned)':''}</option>`).join('')}</select>`;
 }
@@ -2635,7 +2781,7 @@ function flagHistory(name,s){
       return `<div class="fh-flag"><div class="fh-main"><div>⚠ <b>${flagTitle(f)}</b> ${srcTag(f)}<span class="tag ${st[0]}">${st[1]}</span></div>
         <div class="fh-sub">Flag #${flagRef(f)} · ${esc(f.detail)}</div>
         ${f.reviewedBy?`<div class="fh-sub">Reviewed ${fmt(f.reviewedAt)} by ${esc(f.reviewedBy)}${f.reason?' — '+esc(f.reason):''}</div>`:''}
-        <div class="mon-btns" style="margin-top:6px">${f.status==='pending'?`<button class="btn btn-verify" data-f="${esc(f.id)}" onclick="openReview(this.dataset.f)" type="button">Review</button>`:''}${linkBtns(f)}</div></div><div class="fh-off">${offCtl(f)}</div></div>`;}).join('');
+        <div class="mon-btns" style="margin-top:6px">${isReadOnly()?'':(f.status==='pending'?`<button class="btn btn-verify" data-f="${esc(f.id)}" onclick="openReview(this.dataset.f)" type="button">Review</button>`:'')}${linkBtns(f)}</div></div><div class="fh-off">${offCtl(f)}</div></div>`;}).join('');
     const miss=g.missing.length?`<div class="fh-flag"><div class="fh-main"><span style="color:var(--red)">No compliance flag yet:</span> ${g.missing.map(k=>esc(REASON_LABEL[k])).join(', ')} — backfill to review</div></div>`:'';
     return `<div class="fh-group"><div class="fh-head">${head}</div>${rows}${miss}</div>`;
   }).join('');
@@ -2768,7 +2914,7 @@ function renderCompliance(name){
     ${isMgr()?'':`    ${reconcile(name,s)}${secH('Active flags')}<div style="font-size:.78rem;margin-bottom:8px">Overdue Return: <b>${s.cOvd}</b> · Call Log / Verification: <b>${s.cCall}</b> · Total flags: <b>${active.length}</b></div>${active.map(f=>flagCard(f,s,offs,rests,clar)).join('')||'<div style="font-size:.8rem;color:var(--muted)">No active flags.</div>'}
     ${dism.length?`<details style="margin-top:8px"><summary style="cursor:pointer;font-size:.78rem;color:var(--muted)">Reviewed flags — ${dism.length} flag${dism.length>1?'s':''} (dismissed or already turned into an offense)</summary><div style="margin-top:8px">${dism.map(f=>flagCard(f,s,offs,rests,clar)).join('')}</div></details>`:''}
     ${flagHistory(name,s)}`}
-    ${secH('Offense history')}<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">${isMgr()?'Read-only summary.':'Read-only summary. Offenses are assigned or changed from the specific flag in Flag history.'}</div>${steps}${supHtml}
+    ${secH('Offense history')}<div style="font-size:.72rem;color:var(--muted);margin-bottom:4px">${isReadOnly()?'Read-only summary.':'Read-only summary. Offenses are assigned or changed from the specific flag in Flag history.'}</div>${steps}${supHtml}
     ${secH('Restriction status')}
     <div class="off-step"><span>${s.restricted?'🔴':eligible?'🟠':'○'}</span><div><b>${rl[1]}</b>${eligible?'<br>Trigger: <b>'+esc(s.trig.label)+'</b>':''}${s.restricted&&clar?'<br>Trigger: <b>'+esc(trigLabel(clar))+'</b>':''}<br>Manager clarification: ${clar?esc(clarLabel(clar))+(clar.manager?' · Manager: '+esc(clar.manager):''):'—'}${s.restricted?`<br>Restricted by: ${esc(a.restrictedBy)} · ${fmt(a.restrictedAt)}<br>Reason: ${esc(a.restrictionReason)}`:''}</div></div>${restHtml}
     ${secH('Manager clarification')}${clarHtml}`;

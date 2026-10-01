@@ -1194,13 +1194,22 @@
           }
         }
 
-        if (!allPhones.length) {
+        // Deactivated units (retired, lost, etc.) are hidden from the grid —
+        // except the one the agent already has out, so they can still see
+        // and return it even if it gets deactivated while borrowed.
+        // borrowPhone() also refuses a deactivated unit server-side as a
+        // backstop, independent of this filter.
+        const visiblePhones = allPhones.filter(
+          (p) => p.active !== false || (currentAgent && String(p.unitNo) === String(currentAgent.activeBorrowUnit))
+        );
+
+        if (!visiblePhones.length) {
           grid.innerHTML = '<p class="grid-loading">No phones found.</p>';
           document.getElementById("gridFootnote").textContent = "";
           return;
         }
 
-        grid.innerHTML = allPhones
+        grid.innerHTML = visiblePhones
           .map((p) => {
             const st = phoneState(p);
             let cls = "phone-cell";
@@ -1239,7 +1248,7 @@
           .join("");
 
         document.getElementById("gridFootnote").textContent =
-          allPhones.length + (allPhones.length === 1 ? " phone total" : " phones total");
+          visiblePhones.length + (visiblePhones.length === 1 ? " phone total" : " phones total");
       }
 
       // ---------- phone click routing ----------

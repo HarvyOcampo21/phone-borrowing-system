@@ -132,6 +132,12 @@ async function getAgents(opts) {
       restricted: !!v.restricted,
       restrictionReason: v.restrictionReason || "",
       restrictedAt: toIso(v.restrictedAt),
+      // Soft-delete: agents are never actually deleted (their borrow/return
+      // history and compliance record needs to stay intact), only
+      // deactivated. Missing field on old docs = active, same as before.
+      active: v.active !== false,
+      deactivatedAt: toIso(v.deactivatedAt),
+      deactivatedBy: v.deactivatedBy || "",
     });
   });
   return { success: true, agents };
@@ -149,16 +155,34 @@ async function addAgent(data) {
     pin: "",
     activeBorrowUnit: null,
     activeRecordId: null,
+    active: true,
   });
   return { success: true, message: "Agent added." };
 }
 
-async function removeAgent(data) {
-  const ref = doc(db, "agents", slug(data.name));
-  if (!(await getDoc(ref)).exists())
-    return { success: false, message: "Agent not found." };
-  await deleteDoc(ref);
-  return { success: true, message: "Agent removed." };
+// Replaces the old hard-delete removeAgent: the agent doc (and every
+// borrowing record, flag, offense and restriction that references them)
+// stays in Firestore — an agent is only ever hidden from the agent portal
+// (agentLogin/borrowPhone reject them) and from the "active" view of Manage
+// Agents. Their dashboard, records and compliance history remain fully
+// viewable/reportable. Reactivating just flips the same field back.
+async function setAgentActive(data) {
+  const name = need(data.name, "Missing agent name.");
+  const active = !!data.active;
+  const ref = doc(db, "agents", slug(name));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Agent not found." };
+  const patch = active
+    ? { active: true, reactivatedAt: Timestamp.now(), reactivatedBy: data.by || "" }
+    : { active: false, deactivatedAt: Timestamp.now(), deactivatedBy: data.by || "" };
+  await updateDoc(ref, patch);
+  const stillHolding = !active && snap.data().activeBorrowUnit;
+  return {
+    success: true,
+    message: active
+      ? "Agent reactivated."
+      : "Agent deactivated." + (stillHolding ? ` Note: they still have Unit ${snap.data().activeBorrowUnit} borrowed — they can still return it, but can't borrow another.` : ""),
+  };
 }
 
 async function assignTeam(data) {
@@ -215,6 +239,11 @@ async function getPhones(opts) {
       pendingRecordId: v.pendingRecordId || null,
       physicallyReturned: !!v.physicallyReturned,
       unavailableReason: v.unavailableReason || null,
+      // Soft-delete, same as agents: the unit's borrow history stays
+      // reportable in Unit History / All Records even after it's retired.
+      active: v.active !== false,
+      deactivatedAt: toIso(v.deactivatedAt),
+      deactivatedBy: v.deactivatedBy || "",
     });
   });
   return { success: true, phones };
@@ -235,16 +264,36 @@ async function addPhone(data) {
     pendingRecordId: null,
     physicallyReturned: false,
     unavailableReason: null,
+    active: true,
   });
   return { success: true, message: "Phone unit added." };
 }
 
-async function removePhone(data) {
-  const ref = doc(db, "phones", slug(data.unitNo));
-  if (!(await getDoc(ref)).exists())
-    return { success: false, message: "Phone unit not found." };
-  await deleteDoc(ref);
-  return { success: true, message: "Phone unit removed." };
+// Replaces the old hard-delete removePhone. A deactivated unit disappears
+// from the agent portal's borrow grid (and borrowPhone refuses it
+// server-side as a backstop) but stays fully visible/manageable in the
+// admin app, and every past record for it stays in Unit History / All
+// Records. Retiring a unit that's currently out doesn't strand it — it
+// still shows up in Pending Returns / Unreturned exactly as before, so the
+// normal return flow still works; it just can't be borrowed again after.
+async function setPhoneActive(data) {
+  const unitNo = need(data.unitNo, "Missing unit number.");
+  const active = !!data.active;
+  const ref = doc(db, "phones", slug(unitNo));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Phone unit not found." };
+  const patch = active
+    ? { active: true, reactivatedAt: Timestamp.now(), reactivatedBy: data.by || "" }
+    : { active: false, deactivatedAt: Timestamp.now(), deactivatedBy: data.by || "" };
+  await updateDoc(ref, patch);
+  const p = snap.data();
+  const stillOut = !active && p.available === false;
+  return {
+    success: true,
+    message: active
+      ? "Phone unit reactivated."
+      : "Phone unit deactivated." + (stillOut ? " Note: it's still checked out — the normal return process still applies, it just can't be borrowed again after." : ""),
+  };
 }
 
 // ── BORROW / RETURN (Firestore transactions) ───────────────
@@ -264,6 +313,10 @@ async function borrowPhone(data) {
       const p = phoneSnap.data();
       if (a.restricted)
         throw new Error("Your account is restricted. Please speak with your manager or an admin.");
+      if (a.active === false)
+        throw new Error("Your account has been deactivated and can no longer borrow phones.");
+      if (p.active === false)
+        throw new Error("This unit is no longer available for borrowing.");
       if (a.activeBorrowUnit) {
         const heldRef = doc(db, "phones", slug(a.activeBorrowUnit));
         const heldSnap = await tx.get(heldRef);
@@ -702,6 +755,8 @@ async function agentLogin(data) {
   if (snap.empty)
     return { success: false, message: "Invalid email or PIN." };
   const v = snap.docs[0].data();
+  if (v.active === false)
+    return { success: false, message: "This account has been deactivated. Please contact your admin." };
   if (!v.pin)
     return {
       success: false,
@@ -761,11 +816,91 @@ async function adminLogin(data) {
   const snap = await getDoc(doc(db, "admins", slug(data.username)));
   if (!snap.exists()) return { success: false, message: "Invalid username or password." };
   const v = snap.data();
+  if (v.active === false)
+    return { success: false, message: "This account has been deactivated. Please contact another admin." };
   if (v.password.toString().trim() === data.password.trim())
     return { success: true, adminId: snap.id, username: v.username,
-      role: v.role === "manager" ? "manager" : "admin",
+      role: v.role === "manager" ? "manager" : v.role === "director" ? "director" : "admin",
       managerName: v.role === "manager" ? (v.managerName || v.username) : "" };
   return { success: false, message: "Invalid username or password." };
+}
+
+// ── ADMIN ACCOUNT MANAGEMENT (admin-only; see MGR_ALLOWED / DIRECTOR_ALLOWED
+// in admin.html — managers and directors never reach these) ──────────────
+// SECURITY NOTE: there's no Firebase Auth in this app (see the header
+// comment), so — same as every other collection — these calls are only as
+// trustworthy as the person's browser. Anyone with the app's firebaseConfig
+// can call addAdmin/setAdminActive directly via the Firestore SDK,
+// bypassing the UI's role checks entirely, IF your Firestore rules allow
+// writes to `admins`. Building this feature means the `admins` collection
+// can no longer be locked to get-only the way the earlier security review
+// recommended — see firestore.rules.recommended.txt for the updated rule
+// and what it does and doesn't protect against.
+async function getAdmins() {
+  const snap = await getDocs(collection(db, "admins"));
+  const admins = [];
+  snap.forEach((d) => {
+    const v = d.data();
+    // Password intentionally omitted from the response — nothing in the UI
+    // needs to display it, no reason to send it further than it has to go.
+    admins.push({
+      username: v.username,
+      role: v.role === "manager" ? "manager" : v.role === "director" ? "director" : "admin",
+      managerName: v.managerName || "",
+      active: v.active !== false,
+      createdAt: toIso(v.createdAt),
+      createdBy: v.createdBy || "",
+      deactivatedAt: toIso(v.deactivatedAt),
+      deactivatedBy: v.deactivatedBy || "",
+    });
+  });
+  return { success: true, admins };
+}
+
+async function addAdmin(data) {
+  const username = need(data.username, "Username is required.");
+  const password = need(data.password, "Password is required.");
+  const role = ["admin", "manager", "director"].includes(data.role) ? data.role : "admin";
+  const ref = doc(db, "admins", slug(username));
+  if ((await getDoc(ref)).exists())
+    return { success: false, message: "That username already exists." };
+  await setDoc(ref, {
+    username,
+    password, // plaintext, consistent with the app's existing login check — see SECURITY NOTE above
+    role,
+    managerName: role === "manager" ? (data.managerName ? data.managerName.trim() : username) : "",
+    active: true,
+    createdAt: Timestamp.now(),
+    createdBy: data.by || "",
+  });
+  return { success: true, message: "Account created." };
+}
+
+async function setAdminActive(data) {
+  const username = need(data.username, "Missing username.");
+  const active = !!data.active;
+  const ref = doc(db, "admins", slug(username));
+  const snap = await getDoc(ref);
+  if (!snap.exists()) return { success: false, message: "Account not found." };
+  if (!active) {
+    if (slug(username) === slug(data.by || ""))
+      return { success: false, message: "You can't deactivate your own account." };
+    if ((snap.data().role || "admin") === "admin" || !snap.data().role) {
+      // Refuse to deactivate the last active admin — otherwise nobody is
+      // left who can manage accounts, phones, agents or the app at all.
+      const all = await getDocs(collection(db, "admins"));
+      const otherActiveAdmins = all.docs.filter(
+        (d) => d.id !== ref.id && (d.data().role || "admin") === "admin" && d.data().active !== false
+      ).length;
+      if (otherActiveAdmins === 0)
+        return { success: false, message: "Can't deactivate the last active admin account." };
+    }
+  }
+  const patch = active
+    ? { active: true, reactivatedAt: Timestamp.now(), reactivatedBy: data.by || "" }
+    : { active: false, deactivatedAt: Timestamp.now(), deactivatedBy: data.by || "" };
+  await updateDoc(ref, patch);
+  return { success: true, message: active ? "Account reactivated." : "Account deactivated." };
 }
 
 // ── AGENT MONITORING, OFFENSES & RESTRICTIONS ──────────────
@@ -1164,6 +1299,7 @@ const addAdminNote = guard(async (d) => {
 const READ_ACTIONS = new Set([
   "getAgents", "getTeams", "getPhones", "getRecords", "getUnreturned", "getDismissedNotifs",
   "getMonitoring", "getAgentAudit", "getAgent", "getRecord", "adminLogin", "agentLogin", "checkPin", "verifyPin",
+  "getAdmins",
 ]);
 const DENIED_RE = /insufficient permissions|permission-denied/i;
 
@@ -1188,14 +1324,14 @@ async function dispatch(payload) {
     switch (payload.action) {
       case "getAgents":     return await getAgents(payload);
       case "addAgent":      return await addAgent(payload);
-      case "removeAgent":   return await removeAgent(payload);
+      case "setAgentActive": return await setAgentActive(payload);
       case "assignTeam":    return await assignTeam(payload);
       case "getTeams":      return await getTeams(payload);
       case "addTeam":       return await addTeam(payload);
       case "removeTeam":    return await removeTeam(payload);
       case "getPhones":     return await getPhones(payload);
       case "addPhone":      return await addPhone(payload);
-      case "removePhone":   return await removePhone(payload);
+      case "setPhoneActive": return await setPhoneActive(payload);
       case "borrowPhone":   return await borrowPhone(payload);
       case "returnPhone":   return await returnPhone(payload);
       case "confirmPhysicalReturn": return await confirmPhysicalReturn(payload);
@@ -1206,6 +1342,9 @@ async function dispatch(payload) {
       case "getUnreturned": return await getUnreturnedUnits(payload);
       case "verifyRecord":  return await verifyRecord(payload);
       case "adminLogin":    return await adminLogin(payload);
+      case "getAdmins":     return await getAdmins();
+      case "addAdmin":      return await addAdmin(payload);
+      case "setAdminActive": return await setAdminActive(payload);
       case "agentLogin":    return await agentLogin(payload);
       case "getAgent":      return await getAgent(payload);
       case "getRecord":     return await getRecord(payload);
